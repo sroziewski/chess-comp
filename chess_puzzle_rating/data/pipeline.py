@@ -15,6 +15,7 @@ import datetime
 import logging
 from typing import Dict, Any, Optional, Tuple, List, Union
 from tqdm import tqdm
+from pathlib import Path
 
 from ..utils.config import get_config
 from ..utils.progress import (
@@ -134,6 +135,75 @@ class ChessPuzzleDataPipeline:
 
         self.logger.info(f"Checkpoint saved: {checkpoint_path}")
         return checkpoint_path
+
+    def save_dataframe_for_analysis(self, df: pd.DataFrame, name: str, include_timestamp: bool = True) -> Dict[str, str]:
+        """
+        Save a dataframe to multiple formats for analysis purposes.
+
+        This method saves the dataframe to CSV and parquet formats with an optional timestamp
+        in the filename, making it easy to identify and analyze later.
+
+        Parameters
+        ----------
+        df : pandas.DataFrame
+            The dataframe to save
+        name : str
+            A descriptive name for the dataframe
+        include_timestamp : bool, optional
+            Whether to include a timestamp in the filename, by default True
+
+        Returns
+        -------
+        Dict[str, str]
+            A dictionary with the paths to the saved files
+        """
+        # Create analysis directory if it doesn't exist
+        analysis_dir = Path("analysis")
+        analysis_dir.mkdir(exist_ok=True)
+
+        # Generate filename with optional timestamp
+        timestamp = ""
+        if include_timestamp:
+            timestamp = f"_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
+
+        base_filename = f"{name}{timestamp}"
+
+        # Save to multiple formats
+        csv_path = analysis_dir / f"{base_filename}.csv"
+        parquet_path = analysis_dir / f"{base_filename}.parquet"
+
+        # Save the dataframe
+        df.to_csv(csv_path, index=False)
+        df.to_parquet(parquet_path, index=False)
+
+        # Save metadata
+        metadata = {
+            'name': name,
+            'shape': df.shape,
+            'columns': list(df.columns),
+            'dtypes': {col: str(dtype) for col, dtype in df.dtypes.items()},
+            'timestamp': pd.Timestamp.now().isoformat(),
+            'saved_formats': ['csv', 'parquet'],
+            'file_paths': {
+                'csv': str(csv_path),
+                'parquet': str(parquet_path)
+            }
+        }
+
+        metadata_path = analysis_dir / f"{base_filename}_metadata.json"
+        with open(metadata_path, 'w') as f:
+            json.dump(metadata, f, indent=2)
+
+        self.logger.info(f"Dataframe saved for analysis: {name}")
+        self.logger.info(f"  CSV: {csv_path}")
+        self.logger.info(f"  Parquet: {parquet_path}")
+        self.logger.info(f"  Metadata: {metadata_path}")
+
+        return {
+            'csv': str(csv_path),
+            'parquet': str(parquet_path),
+            'metadata': str(metadata_path)
+        }
 
     def _load_checkpoint(self, checkpoint_id: str) -> Optional[pd.DataFrame]:
         """
@@ -333,6 +403,48 @@ class ChessPuzzleDataPipeline:
         """
         self.logger.info("Engineering features...")
 
+        # Generate a checkpoint ID for the features
+        features_checkpoint_id = self._generate_checkpoint_id(combined_df, 'features')
+        features_checkpoint_path = os.path.join(self.checkpoint_dir, f"{features_checkpoint_id}.parquet")
+
+        # Check if features checkpoint exists
+        if os.path.exists(features_checkpoint_path):
+            self.logger.info(f"Loading existing features from checkpoint: {features_checkpoint_path}")
+            features_df = pd.read_parquet(features_checkpoint_path)
+
+            # Try to load predictions if they exist
+            predictions_checkpoint_id = self._generate_checkpoint_id(combined_df, 'tag_predictions')
+            predictions_checkpoint_path = os.path.join(self.checkpoint_dir, f"{predictions_checkpoint_id}.parquet")
+
+            if os.path.exists(predictions_checkpoint_path):
+                predictions = pd.read_parquet(predictions_checkpoint_path)
+                self.logger.info(f"Loaded existing tag predictions from checkpoint. Shape: {predictions.shape}")
+
+                # Record metrics about tag predictions
+                if 'prediction_confidence' in predictions.columns:
+                    avg_confidence = predictions['prediction_confidence'].mean()
+                    record_metric("avg_tag_prediction_confidence", avg_confidence, "feature_stats")
+                    self.logger.info(f"Average tag prediction confidence: {avg_confidence:.4f}")
+            else:
+                predictions = None
+                self.logger.info("No existing tag predictions found in checkpoint.")
+
+            self.logger.info(f"Loaded features from checkpoint. Shape: {features_df.shape}")
+            record_metric("num_features", features_df.shape[1], "feature_stats")
+            record_metric("features_loaded_from_checkpoint", 1, "performance")
+
+            # Save the loaded features dataframe for analysis
+            self.save_dataframe_for_analysis(features_df, 'features_from_checkpoint')
+
+            # If predictions are available, save them for analysis too
+            if predictions is not None:
+                self.save_dataframe_for_analysis(predictions, 'tag_predictions_from_checkpoint')
+
+            return features_df
+
+        # If no checkpoint exists, perform feature engineering
+        self.logger.info("No existing features checkpoint found. Performing feature engineering...")
+
         # Record start time for estimating total time
         start_time = time.time()
 
@@ -361,6 +473,13 @@ class ChessPuzzleDataPipeline:
                 avg_confidence = predictions['prediction_confidence'].mean()
                 record_metric("avg_tag_prediction_confidence", avg_confidence, "feature_stats")
                 self.logger.info(f"Average tag prediction confidence: {avg_confidence:.4f}")
+
+        # Save the features dataframe for analysis
+        self.save_dataframe_for_analysis(features_df, 'features_after_engineering')
+
+        # If predictions are available, save them for analysis too
+        if predictions is not None:
+            self.save_dataframe_for_analysis(predictions, 'tag_predictions')
 
         return features_df
 
