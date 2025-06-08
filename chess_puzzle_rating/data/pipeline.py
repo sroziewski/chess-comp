@@ -276,8 +276,9 @@ class ChessPuzzleDataPipeline:
                 (data['Rating'] > rating_range[1])
             ]
             if len(out_of_range) > 0:
+                file_type = "train" if is_train else "test"
                 self.logger.warning(f"{len(out_of_range)} ratings out of expected range "
-                      f"[{rating_range[0]}, {rating_range[1]}]")
+                      f"[{rating_range[0]}, {rating_range[1]}] in {file_type} file")
 
         self.logger.info("Data validation passed.")
 
