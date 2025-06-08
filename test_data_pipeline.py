@@ -8,19 +8,57 @@ about the resulting datasets.
 import os
 import pandas as pd
 import numpy as np
+import argparse
 from pathlib import Path
 from chess_puzzle_rating.data.pipeline import run_data_pipeline
 
 def main():
     """Run the data pipeline and print information about the results."""
+    # Parse command-line arguments
+    parser = argparse.ArgumentParser(description='Test the data pipeline with custom configuration.')
+    parser.add_argument('--config', type=str, help='Path to the configuration file')
+    parser.add_argument('--cache-dir', type=str, help='Path to the cache directory')
+    args = parser.parse_args()
+
     print("Testing the data pipeline...")
 
     # Create checkpoints directory if it doesn't exist
     os.makedirs("checkpoints", exist_ok=True)
 
+    # If cache-dir is provided, create a temporary config file with the custom cache directory
+    config_path = args.config
+    if args.cache_dir:
+        import yaml
+        import tempfile
+        from chess_puzzle_rating.utils.config import get_config
+
+        # Load existing config or get default
+        if config_path:
+            with open(config_path, 'r') as f:
+                config = yaml.safe_load(f)
+        else:
+            config = get_config()
+
+        # Ensure performance.caching section exists
+        if 'performance' not in config:
+            config['performance'] = {}
+        if 'caching' not in config['performance']:
+            config['performance']['caching'] = {}
+
+        # Set the cache directory
+        config['performance']['caching']['cache_dir'] = args.cache_dir
+
+        # Create a temporary config file
+        fd, temp_config_path = tempfile.mkstemp(suffix='.yaml')
+        with os.fdopen(fd, 'w') as f:
+            yaml.dump(config, f)
+
+        config_path = temp_config_path
+        print(f"Using temporary config with cache directory: {args.cache_dir}")
+
     # Run the pipeline
     try:
-        X_train, X_test, y_train, test_ids = run_data_pipeline()
+        X_train, X_test, y_train, test_ids = run_data_pipeline(config_path)
 
         # Print information about the results
         print("\nPipeline completed successfully!")

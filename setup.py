@@ -16,7 +16,7 @@ setup(
         "jsonschema",
     ],
     author="Chess Puzzle Rating Team",
-    author_email="team@example.com",
+    author_email="simon@simon",
     description="A package for predicting chess puzzle ratings",
     keywords="chess, puzzle, rating, prediction",
     python_requires=">=3.6",

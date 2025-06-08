@@ -4,7 +4,7 @@
 data_paths:
   train_file: "/raid/sroziewski/chess/training_data_02_01.csv"
   test_file: "/raid/sroziewski/chess/testing_data_cropped.csv"
-  submission_file: "/raid/sroziewski/chess/submission_lgbm_pt_ae_no_engine_direct_v1.txt"
+  submission_file: "/raid/sroziewski/chess/submission_lgbm_new_approach.txt"
 
 # Training parameters
 training:

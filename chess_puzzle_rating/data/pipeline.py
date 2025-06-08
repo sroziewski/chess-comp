@@ -47,6 +47,7 @@ class ChessPuzzleDataPipeline:
         config_path : str, optional
             Path to the configuration file. If None, use default configuration.
         """
+        self.config_path = config_path
         self.config = get_config(config_path)
 
         # Create checkpoint directory if it doesn't exist
@@ -451,7 +452,8 @@ class ChessPuzzleDataPipeline:
         # Use the existing feature engineering pipeline
         features_df, model, predictions = complete_feature_engineering(
             combined_df, 
-            tag_column='OpeningTags' if 'OpeningTags' in combined_df.columns else None
+            tag_column='OpeningTags' if 'OpeningTags' in combined_df.columns else None,
+            config_path=self.config_path
         )
 
         # Calculate elapsed time and record metrics

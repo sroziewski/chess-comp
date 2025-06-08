@@ -208,6 +208,34 @@ CONFIG_SCHEMA = {
                     }
                 }
             }
+        },
+        "performance": {
+            "type": "object",
+            "properties": {
+                "parallel": {
+                    "type": "object",
+                    "properties": {
+                        "n_workers": {"type": ["integer", "null"], "minimum": 1},
+                        "max_threads_per_worker": {"type": "integer", "minimum": 1}
+                    }
+                },
+                "caching": {
+                    "type": "object",
+                    "properties": {
+                        "enabled": {"type": "boolean"},
+                        "cache_dir": {"type": "string"},
+                        "max_cache_size_gb": {"type": "integer", "minimum": 1},
+                        "cache_lifetime_days": {"type": "integer", "minimum": 0}
+                    }
+                },
+                "mixed_precision": {
+                    "type": "object",
+                    "properties": {
+                        "enabled": {"type": "boolean"},
+                        "initial_scale": {"type": "integer", "minimum": 1}
+                    }
+                }
+            }
         }
     },
     "required": ["data_paths", "training", "autoencoder", "gpu", "lgbm_params"]
@@ -359,6 +387,22 @@ def get_default_config() -> Dict[str, Any]:
             "text_vectorization": {
                 "themes_min_df": 20,
                 "openings_min_df": 10
+            }
+        },
+        "performance": {
+            "parallel": {
+                "n_workers": None,
+                "max_threads_per_worker": 4
+            },
+            "caching": {
+                "enabled": True,
+                "cache_dir": "~/.chess_puzzle_rating_cache",
+                "max_cache_size_gb": 10,
+                "cache_lifetime_days": 30
+            },
+            "mixed_precision": {
+                "enabled": True,
+                "initial_scale": 65536
             }
         }
     }

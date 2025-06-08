@@ -26,44 +26,65 @@ from chess_puzzle_rating.features.opening_features import engineer_chess_opening
 from chess_puzzle_rating.features.endgame_features import extract_endgame_features
 from chess_puzzle_rating.utils.config import get_config
 
-# Get configuration
-config = get_config()
-performance_config = config.get('performance', {})
-caching_config = performance_config.get('caching', {})
-
 # Get logger
 logger = get_logger()
 
-# Set up caching if enabled
-caching_enabled = caching_config.get('enabled', True)
-if caching_enabled:
-    cache_dir = os.path.expanduser(caching_config.get('cache_dir', '~/.chess_puzzle_rating_cache'))
-    os.makedirs(cache_dir, exist_ok=True)
+# Initialize memory as None, will be set up in complete_feature_engineering
+memory = None
 
-    # Get cache size limit
-    cache_size_gb = caching_config.get('max_cache_size_gb', 10)
-    bytes_limit = cache_size_gb * 1024 * 1024 * 1024
+def setup_caching(config_path=None):
+    """
+    Set up caching with the given configuration.
 
-    memory = Memory(
-        cache_dir, 
-        verbose=0,
-        bytes_limit=bytes_limit,
-        mmap_mode='r'
-    )
-    logger.info(f"Caching enabled. Using cache directory: {cache_dir} (max size: {cache_size_gb} GB)")
+    Parameters
+    ----------
+    config_path : str, optional
+        Path to the configuration file. If None, use default configuration.
 
-    # Record cache configuration
-    record_metric("cache_enabled", 1, "cache_config")
-    record_metric("cache_size_gb", cache_size_gb, "cache_config")
-else:
-    # Create a no-op memory cache when caching is disabled
-    memory = Memory(None, verbose=0)
-    logger.info("Caching disabled.")
-    record_metric("cache_enabled", 0, "cache_config")
+    Returns
+    -------
+    joblib.Memory
+        Memory object for caching
+    """
+    global memory
+
+    # Get configuration
+    config = get_config(config_path)
+    performance_config = config.get('performance', {})
+    caching_config = performance_config.get('caching', {})
+
+    # Set up caching if enabled
+    caching_enabled = caching_config.get('enabled', True)
+    if caching_enabled:
+        cache_dir = os.path.expanduser(caching_config.get('cache_dir', '~/.chess_puzzle_rating_cache'))
+        os.makedirs(cache_dir, exist_ok=True)
+
+        # Get cache size limit
+        cache_size_gb = caching_config.get('max_cache_size_gb', 10)
+        bytes_limit = cache_size_gb * 1024 * 1024 * 1024
+
+        memory = Memory(
+            cache_dir, 
+            verbose=0,
+            bytes_limit=bytes_limit,
+            mmap_mode='r'
+        )
+        logger.info(f"Caching enabled. Using cache directory: {cache_dir} (max size: {cache_size_gb} GB)")
+
+        # Record cache configuration
+        record_metric("cache_enabled", 1, "cache_config")
+        record_metric("cache_size_gb", cache_size_gb, "cache_config")
+    else:
+        # Create a no-op memory cache when caching is disabled
+        memory = Memory(None, verbose=0)
+        logger.info("Caching disabled.")
+        record_metric("cache_enabled", 0, "cache_config")
+
+    return memory
 
 
 @log_time
-def complete_feature_engineering(df, tag_column='OpeningTags', n_workers=None):
+def complete_feature_engineering(df, tag_column='OpeningTags', n_workers=None, config_path=None):
     """
     Complete pipeline for feature engineering with opening tag prediction.
 
@@ -76,6 +97,8 @@ def complete_feature_engineering(df, tag_column='OpeningTags', n_workers=None):
     n_workers : int, optional
         Number of worker processes to use for parallel processing.
         If None, uses the value from config or the number of CPU cores.
+    config_path : str, optional
+        Path to the configuration file. If None, use default configuration.
 
     Returns
     -------
@@ -87,6 +110,14 @@ def complete_feature_engineering(df, tag_column='OpeningTags', n_workers=None):
     """
     # Get logger
     logger = get_logger()
+
+    # Set up caching with the given configuration
+    global memory
+    memory = setup_caching(config_path)
+
+    # Get configuration
+    config = get_config(config_path)
+    performance_config = config.get('performance', {})
 
     # Record start time for overall process
     start_time = time.time()
