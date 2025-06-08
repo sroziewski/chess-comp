@@ -136,6 +136,57 @@ progress_tracking:
   # Whether to store metrics for dashboard
   store_metrics: true
 
+# Stacking model configuration
+stacking:
+  # Number of cross-validation splits for stacking
+  n_splits: 5
+  # Whether to optimize meta-learner hyperparameters
+  optimize_meta_learner: true
+  # Type of meta-learner to use ('lightgbm', 'xgboost', or 'neural_network')
+  meta_learner_type: 'lightgbm'
+  # Whether to use original features in meta-learner
+  use_features_in_meta: true
+  # Directory to save stacking models
+  model_save_dir: "trained_models_stacking"
+  # Rating range-specific models configuration
+  rating_ranges:
+    # Whether to enable rating range-specific models
+    enabled: true
+    # Rating ranges for separate models
+    ranges:
+      - [0, 1000]
+      - [1000, 1500]
+      - [1500, 2000]
+      - [2000, 2500]
+      - [2500, 3000]
+      - [3000, 3500]
+    # Ensemble method for combining range-specific models ('weighted_average', 'stacking')
+    ensemble_method: 'weighted_average'
+    # Overlap between ranges for smooth transitions (in rating points)
+    range_overlap: 100
+  # Base model parameters
+  base_models:
+    # LightGBM base model parameters
+    lightgbm:
+      n_estimators: 1000
+      learning_rate: 0.05
+      num_leaves: 31
+      max_depth: -1
+      early_stopping_rounds: 50
+    # XGBoost base model parameters
+    xgboost:
+      n_estimators: 1000
+      learning_rate: 0.05
+      max_depth: 6
+      early_stopping_rounds: 50
+    # Neural Network base model parameters
+    neural_network:
+      hidden_dims: [256, 128, 64]
+      learning_rate: 0.001
+      batch_size: 256
+      epochs: 100
+      patience: 10
+
 # Performance dashboards configuration
 dashboards:
   # Enable performance dashboards

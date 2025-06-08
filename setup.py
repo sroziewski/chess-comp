@@ -15,6 +15,13 @@ setup(
         "pyyaml",
         "jsonschema",
     ],
+    extras_require={
+        "dev": [
+            "pytest",
+            "pytest-cov",
+            "pytest-mock",
+        ],
+    },
     author="Chess Puzzle Rating Team",
     author_email="simon@simon",
     description="A package for predicting chess puzzle ratings",
