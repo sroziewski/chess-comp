@@ -56,10 +56,10 @@ This document contains a prioritized checklist of actionable improvement tasks f
    - [x] Detect material sacrifices in solutions
    - [x] Analyze move depth complexity
 
-[ ] Improve opening tag prediction
-   - [ ] Implement ensemble approach for tag prediction
-   - [ ] Create hierarchical classification (family → variation)
-   - [ ] Strengthen integration with ECO codes
+[x] Improve opening tag prediction
+   - [x] Implement ensemble approach for tag prediction
+   - [x] Create hierarchical classification (family → variation)
+   - [x] Strengthen integration with ECO codes
 
 [ ] Add endgame-specific features
    - [ ] Implement endgame pattern recognition
