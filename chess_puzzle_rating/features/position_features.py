@@ -378,6 +378,426 @@ def process_single_fen(idx_fen):
         return idx, None
 
 
+def extract_features_from_board(idx_board_fen):
+    """
+    Extract features from a single board object.
+
+    Parameters
+    ----------
+    idx_board_fen : tuple
+        Tuple containing (idx, board, fen)
+
+    Returns
+    -------
+    dict
+        Dictionary with extracted features
+    """
+    idx, board, fen = idx_board_fen
+    feature_dict = {'idx': idx}
+
+    try:
+        if board is None:
+            # Skip this FEN if we couldn't create a board
+            return feature_dict
+
+        # 1. Piece count features
+        pieces = board.piece_map()
+
+        # Initialize counters for each piece type
+        for color in [chess.WHITE, chess.BLACK]:
+            for piece_type in range(1, 7):  # 1=PAWN, 2=KNIGHT, 3=BISHOP, 4=ROOK, 5=QUEEN, 6=KING
+                color_name = 'white' if color == chess.WHITE else 'black'
+                piece_name = ['pawn', 'knight', 'bishop', 'rook', 'queen', 'king'][piece_type - 1]
+                feature_dict[f'piece_count_{color_name}_{piece_name}'] = 0
+
+        # Count pieces
+        for square, piece in pieces.items():
+            color_name = 'white' if piece.color == chess.WHITE else 'black'
+            piece_name = ['pawn', 'knight', 'bishop', 'rook', 'queen', 'king'][piece.piece_type - 1]
+            feature_dict[f'piece_count_{color_name}_{piece_name}'] += 1
+
+        # 2. Material balance - using values from configuration
+        config_values = get_config()['feature_engineering']['material_values']
+        material_values = {
+            chess.PAWN: config_values['pawn'],
+            chess.KNIGHT: config_values['knight'],
+            chess.BISHOP: config_values['bishop'],
+            chess.ROOK: config_values['rook'],
+            chess.QUEEN: config_values['queen'],
+            chess.KING: config_values['king']
+        }
+        white_material = 0
+        black_material = 0
+
+        for square, piece in pieces.items():
+            value = material_values[piece.piece_type]
+            if piece.color == chess.WHITE:
+                white_material += value
+            else:
+                black_material += value
+
+        feature_dict['material_balance'] = white_material - black_material
+        feature_dict['total_material'] = white_material + black_material
+
+        # 3. Pawn structure features
+        white_pawns = [s for s, p in pieces.items() if p.piece_type == chess.PAWN and p.color == chess.WHITE]
+        black_pawns = [s for s, p in pieces.items() if p.piece_type == chess.PAWN and p.color == chess.BLACK]
+
+        # Pawn files (a-h -> 0-7)
+        white_pawn_files = [chess.square_file(s) for s in white_pawns]
+        black_pawn_files = [chess.square_file(s) for s in black_pawns]
+
+        # Count doubled/isolated pawns
+        white_file_counts = Counter(white_pawn_files)
+        black_file_counts = Counter(black_pawn_files)
+
+        feature_dict['white_doubled_pawns'] = sum(1 for count in white_file_counts.values() if count > 1)
+        feature_dict['black_doubled_pawns'] = sum(1 for count in black_file_counts.values() if count > 1)
+
+        feature_dict['white_isolated_pawns'] = sum(1 for file in white_file_counts.keys()
+                                                if file - 1 not in white_file_counts and file + 1 not in white_file_counts)
+        feature_dict['black_isolated_pawns'] = sum(1 for file in black_file_counts.keys()
+                                                if file - 1 not in black_file_counts and file + 1 not in black_file_counts)
+
+        # Advanced pawn structure analysis
+        # Pawn chains
+        white_pawn_chains = identify_pawn_chains(white_pawns)
+        black_pawn_chains = identify_pawn_chains(black_pawns)
+
+        feature_dict['white_pawn_chains'] = len(white_pawn_chains)
+        feature_dict['black_pawn_chains'] = len(black_pawn_chains)
+
+        # Longest chain
+        feature_dict['white_longest_chain'] = max([len(chain) for chain in white_pawn_chains]) if white_pawn_chains else 0
+        feature_dict['black_longest_chain'] = max([len(chain) for chain in black_pawn_chains]) if black_pawn_chains else 0
+
+        # Total pawns in chains
+        feature_dict['white_pawns_in_chains'] = sum(len(chain) for chain in white_pawn_chains)
+        feature_dict['black_pawns_in_chains'] = sum(len(chain) for chain in black_pawn_chains)
+
+        # Pawn islands
+        feature_dict['white_pawn_islands'] = identify_pawn_islands(white_pawns)
+        feature_dict['black_pawn_islands'] = identify_pawn_islands(black_pawns)
+
+        # 4. Center control
+        central_squares = [chess.D4, chess.E4, chess.D5, chess.E5]  # d4, e4, d5, e5
+
+        white_center_control = 0
+        black_center_control = 0
+
+        for sq in central_squares:
+            white_attackers = len(board.attackers(chess.WHITE, sq))
+            black_attackers = len(board.attackers(chess.BLACK, sq))
+            white_center_control += white_attackers
+            black_center_control += black_attackers
+
+        feature_dict['white_center_control'] = white_center_control
+        feature_dict['black_center_control'] = black_center_control
+        feature_dict['center_control_balance'] = white_center_control - black_center_control
+
+        # 5. Enhanced king safety with attack pattern detection
+        white_king_square = board.king(chess.WHITE)
+        black_king_square = board.king(chess.BLACK)
+
+        # Basic king position features
+        if white_king_square is not None:
+            white_king_file = chess.square_file(white_king_square)
+            white_king_rank = chess.square_rank(white_king_square)
+            feature_dict['white_king_castled_kingside'] = 1 if white_king_file >= 6 else 0  # g or h file
+            feature_dict['white_king_castled_queenside'] = 1 if white_king_file <= 2 else 0  # a, b or c file
+            feature_dict['white_king_center'] = 1 if 3 <= white_king_file <= 4 else 0  # d or e file
+
+            # King zone (squares around the king)
+            white_king_zone = []
+            for file_offset in [-1, 0, 1]:
+                for rank_offset in [-1, 0, 1]:
+                    if file_offset == 0 and rank_offset == 0:
+                        continue  # Skip the king's square itself
+
+                    zone_file = white_king_file + file_offset
+                    zone_rank = white_king_rank + rank_offset
+
+                    if 0 <= zone_file <= 7 and 0 <= zone_rank <= 7:
+                        zone_square = chess.square(zone_file, zone_rank)
+                        white_king_zone.append(zone_square)
+
+            # Count attackers to king zone
+            white_king_attackers = 0
+            for zone_square in white_king_zone + [white_king_square]:
+                attackers = board.attackers(chess.BLACK, zone_square)
+                white_king_attackers += len(attackers)
+
+            feature_dict['white_king_attackers'] = white_king_attackers
+
+            # Pawn shield analysis
+            white_pawn_shield = 0
+            for file_offset in [-1, 0, 1]:
+                shield_file = white_king_file + file_offset
+                if 0 <= shield_file <= 7:
+                    for rank_offset in [1, 2]:  # 1-2 squares in front of king
+                        shield_rank = white_king_rank + rank_offset if white_king_rank <= 5 else white_king_rank - rank_offset
+                        if 0 <= shield_rank <= 7:
+                            shield_square = chess.square(shield_file, shield_rank)
+                            piece = board.piece_at(shield_square)
+                            if piece and piece.piece_type == chess.PAWN and piece.color == chess.WHITE:
+                                white_pawn_shield += 1
+
+            feature_dict['white_pawn_shield'] = white_pawn_shield
+
+            # Open files near king
+            white_king_open_files = 0
+            for file_offset in [-1, 0, 1]:
+                check_file = white_king_file + file_offset
+                if 0 <= check_file <= 7:
+                    file_has_pawn = False
+                    for rank in range(8):
+                        square = chess.square(check_file, rank)
+                        piece = board.piece_at(square)
+                        if piece and piece.piece_type == chess.PAWN:
+                            file_has_pawn = True
+                            break
+                    if not file_has_pawn:
+                        white_king_open_files += 1
+
+            feature_dict['white_king_open_files'] = white_king_open_files
+        else:
+            feature_dict['white_king_castled_kingside'] = 0
+            feature_dict['white_king_castled_queenside'] = 0
+            feature_dict['white_king_center'] = 0
+            feature_dict['white_king_attackers'] = 0
+            feature_dict['white_pawn_shield'] = 0
+            feature_dict['white_king_open_files'] = 0
+
+        # Repeat for black king
+        if black_king_square is not None:
+            black_king_file = chess.square_file(black_king_square)
+            black_king_rank = chess.square_rank(black_king_square)
+            feature_dict['black_king_castled_kingside'] = 1 if black_king_file >= 6 else 0
+            feature_dict['black_king_castled_queenside'] = 1 if black_king_file <= 2 else 0
+            feature_dict['black_king_center'] = 1 if 3 <= black_king_file <= 4 else 0
+
+            # King zone (squares around the king)
+            black_king_zone = []
+            for file_offset in [-1, 0, 1]:
+                for rank_offset in [-1, 0, 1]:
+                    if file_offset == 0 and rank_offset == 0:
+                        continue  # Skip the king's square itself
+
+                    zone_file = black_king_file + file_offset
+                    zone_rank = black_king_rank + rank_offset
+
+                    if 0 <= zone_file <= 7 and 0 <= zone_rank <= 7:
+                        zone_square = chess.square(zone_file, zone_rank)
+                        black_king_zone.append(zone_square)
+
+            # Count attackers to king zone
+            black_king_attackers = 0
+            for zone_square in black_king_zone + [black_king_square]:
+                attackers = board.attackers(chess.WHITE, zone_square)
+                black_king_attackers += len(attackers)
+
+            feature_dict['black_king_attackers'] = black_king_attackers
+
+            # Pawn shield analysis
+            black_pawn_shield = 0
+            for file_offset in [-1, 0, 1]:
+                shield_file = black_king_file + file_offset
+                if 0 <= shield_file <= 7:
+                    for rank_offset in [1, 2]:  # 1-2 squares in front of king
+                        shield_rank = black_king_rank - rank_offset if black_king_rank >= 2 else black_king_rank + rank_offset
+                        if 0 <= shield_rank <= 7:
+                            shield_square = chess.square(shield_file, shield_rank)
+                            piece = board.piece_at(shield_square)
+                            if piece and piece.piece_type == chess.PAWN and piece.color == chess.BLACK:
+                                black_pawn_shield += 1
+
+            feature_dict['black_pawn_shield'] = black_pawn_shield
+
+            # Open files near king
+            black_king_open_files = 0
+            for file_offset in [-1, 0, 1]:
+                check_file = black_king_file + file_offset
+                if 0 <= check_file <= 7:
+                    file_has_pawn = False
+                    for rank in range(8):
+                        square = chess.square(check_file, rank)
+                        piece = board.piece_at(square)
+                        if piece and piece.piece_type == chess.PAWN:
+                            file_has_pawn = True
+                            break
+                    if not file_has_pawn:
+                        black_king_open_files += 1
+
+            feature_dict['black_king_open_files'] = black_king_open_files
+        else:
+            feature_dict['black_king_castled_kingside'] = 0
+            feature_dict['black_king_castled_queenside'] = 0
+            feature_dict['black_king_center'] = 0
+            feature_dict['black_king_attackers'] = 0
+            feature_dict['black_pawn_shield'] = 0
+            feature_dict['black_king_open_files'] = 0
+
+        # King safety score (higher is safer) - using weights from configuration
+        king_safety_weights = get_config()['feature_engineering']['king_safety_weights']
+        pawn_shield_weight = king_safety_weights['pawn_shield']
+        king_attackers_weight = king_safety_weights['king_attackers']
+        king_open_files_weight = king_safety_weights['king_open_files']
+        castling_bonus = king_safety_weights['castling_bonus']
+
+        if white_king_square is not None:
+            feature_dict['white_king_safety'] = (
+                (feature_dict['white_pawn_shield'] * pawn_shield_weight) + 
+                (feature_dict['white_king_attackers'] * king_attackers_weight) + 
+                (feature_dict['white_king_open_files'] * king_open_files_weight) +
+                (castling_bonus if feature_dict['white_king_castled_kingside'] or feature_dict['white_king_castled_queenside'] else 0)
+            )
+        else:
+            feature_dict['white_king_safety'] = 0
+
+        if black_king_square is not None:
+            feature_dict['black_king_safety'] = (
+                (feature_dict['black_pawn_shield'] * pawn_shield_weight) + 
+                (feature_dict['black_king_attackers'] * king_attackers_weight) + 
+                (feature_dict['black_king_open_files'] * king_open_files_weight) +
+                (castling_bonus if feature_dict['black_king_castled_kingside'] or feature_dict['black_king_castled_queenside'] else 0)
+            )
+        else:
+            feature_dict['black_king_safety'] = 0
+
+        # 6. Development features
+        white_knights_developed = sum(1 for s, p in pieces.items()
+                                    if p.piece_type == chess.KNIGHT and p.color == chess.WHITE
+                                    and not chess.square_rank(s) == 0)  # Not on first rank
+        white_bishops_developed = sum(1 for s, p in pieces.items()
+                                    if p.piece_type == chess.BISHOP and p.color == chess.WHITE
+                                    and not chess.square_rank(s) == 0)  # Not on first rank
+
+        black_knights_developed = sum(1 for s, p in pieces.items()
+                                    if p.piece_type == chess.KNIGHT and p.color == chess.BLACK
+                                    and not chess.square_rank(s) == 7)  # Not on last rank
+        black_bishops_developed = sum(1 for s, p in pieces.items()
+                                    if p.piece_type == chess.BISHOP and p.color == chess.BLACK
+                                    and not chess.square_rank(s) == 7)  # Not on last rank
+
+        feature_dict['white_minor_pieces_developed'] = white_knights_developed + white_bishops_developed
+        feature_dict['black_minor_pieces_developed'] = black_knights_developed + black_bishops_developed
+
+        # 7. Enhanced mobility features
+        # Initialize mobility counters for each piece type
+        white_mobility = {
+            'pawn': 0,
+            'knight': 0,
+            'bishop': 0,
+            'rook': 0,
+            'queen': 0,
+            'king': 0,
+            'total': 0
+        }
+        black_mobility = {
+            'pawn': 0,
+            'knight': 0,
+            'bishop': 0,
+            'rook': 0,
+            'queen': 0,
+            'king': 0,
+            'total': 0
+        }
+
+        # Piece type names for mapping
+        piece_names = ['pawn', 'knight', 'bishop', 'rook', 'queen', 'king']
+
+        # Count legal moves for each piece with context
+        for square, piece in pieces.items():
+            # Create a new board with just this piece to count its moves
+            temp_board = chess.Board(None)
+            temp_board.set_piece_at(square, piece)
+
+            # Set the turn to match the piece color
+            temp_board.turn = piece.color
+
+            # Count legal moves
+            moves = list(temp_board.legal_moves)
+            piece_name = piece_names[piece.piece_type - 1]
+
+            if piece.color == chess.WHITE:
+                white_mobility[piece_name] += len(moves)
+                white_mobility['total'] += len(moves)
+            else:
+                black_mobility[piece_name] += len(moves)
+                black_mobility['total'] += len(moves)
+
+        # Add individual piece type mobility to features
+        for piece_name in piece_names:
+            feature_dict[f'white_{piece_name}_mobility'] = white_mobility[piece_name]
+            feature_dict[f'black_{piece_name}_mobility'] = black_mobility[piece_name]
+
+        # Add total mobility
+        feature_dict['white_mobility'] = white_mobility['total']
+        feature_dict['black_mobility'] = black_mobility['total']
+        feature_dict['mobility_balance'] = white_mobility['total'] - black_mobility['total']
+
+        # Calculate mobility ratios for major pieces
+        feature_dict['white_minor_piece_mobility_ratio'] = (
+            (white_mobility['knight'] + white_mobility['bishop']) / 
+            max(1, white_mobility['total'] - white_mobility['pawn'] - white_mobility['king'])
+        )
+        feature_dict['black_minor_piece_mobility_ratio'] = (
+            (black_mobility['knight'] + black_mobility['bishop']) / 
+            max(1, black_mobility['total'] - black_mobility['pawn'] - black_mobility['king'])
+        )
+
+        # Calculate mobility advantage by piece type
+        for piece_name in piece_names:
+            feature_dict[f'{piece_name}_mobility_advantage'] = (
+                white_mobility[piece_name] - black_mobility[piece_name]
+            )
+
+        # 8. Tactical pattern recognition
+        # Pins
+        white_pins = detect_pins(board, chess.WHITE)
+        black_pins = detect_pins(board, chess.BLACK)
+
+        # Add pin features
+        for piece_name in ['pawn', 'knight', 'bishop', 'rook', 'queen']:
+            feature_dict[f'white_pinned_{piece_name}s'] = white_pins[piece_name]
+            feature_dict[f'black_pinned_{piece_name}s'] = black_pins[piece_name]
+
+        feature_dict['white_total_pinned_pieces'] = white_pins['total']
+        feature_dict['black_total_pinned_pieces'] = black_pins['total']
+
+        # Forks
+        white_forks = detect_forks(board, chess.WHITE)
+        black_forks = detect_forks(board, chess.BLACK)
+
+        # Add fork features
+        for fork_type in ['knight_forks', 'pawn_forks', 'bishop_forks', 'rook_forks', 'queen_forks', 'total_forks']:
+            feature_dict[f'white_{fork_type}'] = white_forks[fork_type]
+            feature_dict[f'black_{fork_type}'] = black_forks[fork_type]
+
+        # Discovered attacks
+        feature_dict['white_discovered_attacks'] = detect_discovered_attacks(board, chess.WHITE)
+        feature_dict['black_discovered_attacks'] = detect_discovered_attacks(board, chess.BLACK)
+
+        # Tactical advantage metrics
+        feature_dict['tactical_advantage_pins'] = white_pins['total'] - black_pins['total']
+        feature_dict['tactical_advantage_forks'] = white_forks['total_forks'] - black_forks['total_forks']
+        feature_dict['tactical_advantage_discovered'] = feature_dict['white_discovered_attacks'] - feature_dict['black_discovered_attacks']
+
+        # Overall tactical advantage - using weights from configuration
+        tactical_weights = get_config()['feature_engineering']['tactical_advantage_weights']
+        feature_dict['overall_tactical_advantage'] = (
+            feature_dict['tactical_advantage_pins'] * tactical_weights['pins'] + 
+            feature_dict['tactical_advantage_forks'] * tactical_weights['forks'] + 
+            feature_dict['tactical_advantage_discovered'] * tactical_weights['discovered_attacks']
+        )
+
+        return feature_dict
+
+    except Exception as e:
+        print(f"Error extracting features for FEN {fen}: {e}")
+        return feature_dict
+
+
 def extract_fen_features(df, fen_column='FEN'):
     """
     Extract rich positional features from FEN strings.
@@ -403,14 +823,11 @@ def extract_fen_features(df, fen_column='FEN'):
     parallel_config = performance_config.get('parallel', {})
 
     # Determine the number of threads to use for internal parallelization
-    # Use the max_threads_per_worker setting from the configuration
-    max_threads = parallel_config.get('max_threads_per_worker', 2)
-    # Use at least 2 threads but no more than max_threads
-    n_threads = max(2, min(max_threads, os.cpu_count() or 1))
+    # Use all available CPU cores for maximum parallelization
+    n_threads = os.cpu_count() or 4  # Default to 4 if os.cpu_count() returns None
 
     # Prepare the list of (idx, fen) tuples
     idx_fen_tuples = list(df[fen_column].items())
-    features = []
 
     # Process FEN strings in parallel using ThreadPoolExecutor to create board objects
     print(f"Using {n_threads} threads for parallel FEN processing")
@@ -420,414 +837,16 @@ def extract_fen_features(df, fen_column='FEN'):
         for idx, board in tqdm(executor.map(process_single_fen, idx_fen_tuples), total=len(idx_fen_tuples), desc="Creating board objects"):
             boards[idx] = board
 
-    # Now process each board to extract features
-    for idx, fen in tqdm(idx_fen_tuples, total=len(idx_fen_tuples), desc="Extracting features"):
-        try:
-            # Use the board object we already created in parallel
-            board = boards[idx]
-            if board is None:
-                # Skip this FEN if we couldn't create a board
-                features.append({'idx': idx})
-                continue
-
-            feature_dict = {'idx': idx}
-
-            # 1. Piece count features
-            pieces = board.piece_map()
-
-            # Initialize counters for each piece type
-            for color in [chess.WHITE, chess.BLACK]:
-                for piece_type in range(1, 7):  # 1=PAWN, 2=KNIGHT, 3=BISHOP, 4=ROOK, 5=QUEEN, 6=KING
-                    color_name = 'white' if color == chess.WHITE else 'black'
-                    piece_name = ['pawn', 'knight', 'bishop', 'rook', 'queen', 'king'][piece_type - 1]
-                    feature_dict[f'piece_count_{color_name}_{piece_name}'] = 0
-
-            # Count pieces
-            for square, piece in pieces.items():
-                color_name = 'white' if piece.color == chess.WHITE else 'black'
-                piece_name = ['pawn', 'knight', 'bishop', 'rook', 'queen', 'king'][piece.piece_type - 1]
-                feature_dict[f'piece_count_{color_name}_{piece_name}'] += 1
-
-            # 2. Material balance - using values from configuration
-            config_values = get_config()['feature_engineering']['material_values']
-            material_values = {
-                chess.PAWN: config_values['pawn'],
-                chess.KNIGHT: config_values['knight'],
-                chess.BISHOP: config_values['bishop'],
-                chess.ROOK: config_values['rook'],
-                chess.QUEEN: config_values['queen'],
-                chess.KING: config_values['king']
-            }
-            white_material = 0
-            black_material = 0
-
-            for square, piece in pieces.items():
-                value = material_values[piece.piece_type]
-                if piece.color == chess.WHITE:
-                    white_material += value
-                else:
-                    black_material += value
-
-            feature_dict['material_balance'] = white_material - black_material
-            feature_dict['total_material'] = white_material + black_material
-
-            # 3. Pawn structure features
-            white_pawns = [s for s, p in pieces.items() if p.piece_type == chess.PAWN and p.color == chess.WHITE]
-            black_pawns = [s for s, p in pieces.items() if p.piece_type == chess.PAWN and p.color == chess.BLACK]
-
-            # Pawn files (a-h -> 0-7)
-            white_pawn_files = [chess.square_file(s) for s in white_pawns]
-            black_pawn_files = [chess.square_file(s) for s in black_pawns]
-
-            # Count doubled/isolated pawns
-            white_file_counts = Counter(white_pawn_files)
-            black_file_counts = Counter(black_pawn_files)
-
-            feature_dict['white_doubled_pawns'] = sum(1 for count in white_file_counts.values() if count > 1)
-            feature_dict['black_doubled_pawns'] = sum(1 for count in black_file_counts.values() if count > 1)
-
-            feature_dict['white_isolated_pawns'] = sum(1 for file in white_file_counts.keys()
-                                                    if file - 1 not in white_file_counts and file + 1 not in white_file_counts)
-            feature_dict['black_isolated_pawns'] = sum(1 for file in black_file_counts.keys()
-                                                    if file - 1 not in black_file_counts and file + 1 not in black_file_counts)
-
-            # Advanced pawn structure analysis
-            # Pawn chains
-            white_pawn_chains = identify_pawn_chains(white_pawns)
-            black_pawn_chains = identify_pawn_chains(black_pawns)
-
-            feature_dict['white_pawn_chains'] = len(white_pawn_chains)
-            feature_dict['black_pawn_chains'] = len(black_pawn_chains)
-
-            # Longest chain
-            feature_dict['white_longest_chain'] = max([len(chain) for chain in white_pawn_chains]) if white_pawn_chains else 0
-            feature_dict['black_longest_chain'] = max([len(chain) for chain in black_pawn_chains]) if black_pawn_chains else 0
-
-            # Total pawns in chains
-            feature_dict['white_pawns_in_chains'] = sum(len(chain) for chain in white_pawn_chains)
-            feature_dict['black_pawns_in_chains'] = sum(len(chain) for chain in black_pawn_chains)
-
-            # Pawn islands
-            feature_dict['white_pawn_islands'] = identify_pawn_islands(white_pawns)
-            feature_dict['black_pawn_islands'] = identify_pawn_islands(black_pawns)
-
-            # 4. Center control
-            central_squares = [chess.D4, chess.E4, chess.D5, chess.E5]  # d4, e4, d5, e5
-
-            white_center_control = 0
-            black_center_control = 0
-
-            for sq in central_squares:
-                white_attackers = len(board.attackers(chess.WHITE, sq))
-                black_attackers = len(board.attackers(chess.BLACK, sq))
-                white_center_control += white_attackers
-                black_center_control += black_attackers
-
-            feature_dict['white_center_control'] = white_center_control
-            feature_dict['black_center_control'] = black_center_control
-            feature_dict['center_control_balance'] = white_center_control - black_center_control
-
-            # 5. Enhanced king safety with attack pattern detection
-            white_king_square = board.king(chess.WHITE)
-            black_king_square = board.king(chess.BLACK)
-
-            # Basic king position features
-            if white_king_square is not None:
-                white_king_file = chess.square_file(white_king_square)
-                white_king_rank = chess.square_rank(white_king_square)
-                feature_dict['white_king_castled_kingside'] = 1 if white_king_file >= 6 else 0  # g or h file
-                feature_dict['white_king_castled_queenside'] = 1 if white_king_file <= 2 else 0  # a, b or c file
-                feature_dict['white_king_center'] = 1 if 3 <= white_king_file <= 4 else 0  # d or e file
-
-                # King zone (squares around the king)
-                white_king_zone = []
-                for file_offset in [-1, 0, 1]:
-                    for rank_offset in [-1, 0, 1]:
-                        if file_offset == 0 and rank_offset == 0:
-                            continue  # Skip the king's square itself
-
-                        zone_file = white_king_file + file_offset
-                        zone_rank = white_king_rank + rank_offset
-
-                        if 0 <= zone_file <= 7 and 0 <= zone_rank <= 7:
-                            zone_square = chess.square(zone_file, zone_rank)
-                            white_king_zone.append(zone_square)
-
-                # Count attackers to king zone
-                white_king_attackers = 0
-                for zone_square in white_king_zone + [white_king_square]:
-                    attackers = board.attackers(chess.BLACK, zone_square)
-                    white_king_attackers += len(attackers)
-
-                feature_dict['white_king_attackers'] = white_king_attackers
-
-                # Pawn shield analysis
-                white_pawn_shield = 0
-                for file_offset in [-1, 0, 1]:
-                    shield_file = white_king_file + file_offset
-                    if 0 <= shield_file <= 7:
-                        for rank_offset in [1, 2]:  # 1-2 squares in front of king
-                            shield_rank = white_king_rank + rank_offset if white_king_rank <= 5 else white_king_rank - rank_offset
-                            if 0 <= shield_rank <= 7:
-                                shield_square = chess.square(shield_file, shield_rank)
-                                piece = board.piece_at(shield_square)
-                                if piece and piece.piece_type == chess.PAWN and piece.color == chess.WHITE:
-                                    white_pawn_shield += 1
-
-                feature_dict['white_pawn_shield'] = white_pawn_shield
-
-                # Open files near king
-                white_king_open_files = 0
-                for file_offset in [-1, 0, 1]:
-                    check_file = white_king_file + file_offset
-                    if 0 <= check_file <= 7:
-                        file_has_pawn = False
-                        for rank in range(8):
-                            square = chess.square(check_file, rank)
-                            piece = board.piece_at(square)
-                            if piece and piece.piece_type == chess.PAWN:
-                                file_has_pawn = True
-                                break
-                        if not file_has_pawn:
-                            white_king_open_files += 1
-
-                feature_dict['white_king_open_files'] = white_king_open_files
-            else:
-                feature_dict['white_king_castled_kingside'] = 0
-                feature_dict['white_king_castled_queenside'] = 0
-                feature_dict['white_king_center'] = 0
-                feature_dict['white_king_attackers'] = 0
-                feature_dict['white_pawn_shield'] = 0
-                feature_dict['white_king_open_files'] = 0
-
-            # Repeat for black king
-            if black_king_square is not None:
-                black_king_file = chess.square_file(black_king_square)
-                black_king_rank = chess.square_rank(black_king_square)
-                feature_dict['black_king_castled_kingside'] = 1 if black_king_file >= 6 else 0
-                feature_dict['black_king_castled_queenside'] = 1 if black_king_file <= 2 else 0
-                feature_dict['black_king_center'] = 1 if 3 <= black_king_file <= 4 else 0
-
-                # King zone (squares around the king)
-                black_king_zone = []
-                for file_offset in [-1, 0, 1]:
-                    for rank_offset in [-1, 0, 1]:
-                        if file_offset == 0 and rank_offset == 0:
-                            continue  # Skip the king's square itself
-
-                        zone_file = black_king_file + file_offset
-                        zone_rank = black_king_rank + rank_offset
-
-                        if 0 <= zone_file <= 7 and 0 <= zone_rank <= 7:
-                            zone_square = chess.square(zone_file, zone_rank)
-                            black_king_zone.append(zone_square)
-
-                # Count attackers to king zone
-                black_king_attackers = 0
-                for zone_square in black_king_zone + [black_king_square]:
-                    attackers = board.attackers(chess.WHITE, zone_square)
-                    black_king_attackers += len(attackers)
-
-                feature_dict['black_king_attackers'] = black_king_attackers
-
-                # Pawn shield analysis
-                black_pawn_shield = 0
-                for file_offset in [-1, 0, 1]:
-                    shield_file = black_king_file + file_offset
-                    if 0 <= shield_file <= 7:
-                        for rank_offset in [1, 2]:  # 1-2 squares in front of king
-                            shield_rank = black_king_rank - rank_offset if black_king_rank >= 2 else black_king_rank + rank_offset
-                            if 0 <= shield_rank <= 7:
-                                shield_square = chess.square(shield_file, shield_rank)
-                                piece = board.piece_at(shield_square)
-                                if piece and piece.piece_type == chess.PAWN and piece.color == chess.BLACK:
-                                    black_pawn_shield += 1
-
-                feature_dict['black_pawn_shield'] = black_pawn_shield
-
-                # Open files near king
-                black_king_open_files = 0
-                for file_offset in [-1, 0, 1]:
-                    check_file = black_king_file + file_offset
-                    if 0 <= check_file <= 7:
-                        file_has_pawn = False
-                        for rank in range(8):
-                            square = chess.square(check_file, rank)
-                            piece = board.piece_at(square)
-                            if piece and piece.piece_type == chess.PAWN:
-                                file_has_pawn = True
-                                break
-                        if not file_has_pawn:
-                            black_king_open_files += 1
-
-                feature_dict['black_king_open_files'] = black_king_open_files
-            else:
-                feature_dict['black_king_castled_kingside'] = 0
-                feature_dict['black_king_castled_queenside'] = 0
-                feature_dict['black_king_center'] = 0
-                feature_dict['black_king_attackers'] = 0
-                feature_dict['black_pawn_shield'] = 0
-                feature_dict['black_king_open_files'] = 0
-
-            # King safety score (higher is safer) - using weights from configuration
-            king_safety_weights = get_config()['feature_engineering']['king_safety_weights']
-            pawn_shield_weight = king_safety_weights['pawn_shield']
-            king_attackers_weight = king_safety_weights['king_attackers']
-            king_open_files_weight = king_safety_weights['king_open_files']
-            castling_bonus = king_safety_weights['castling_bonus']
-
-            if white_king_square is not None:
-                feature_dict['white_king_safety'] = (
-                    (feature_dict['white_pawn_shield'] * pawn_shield_weight) + 
-                    (feature_dict['white_king_attackers'] * king_attackers_weight) + 
-                    (feature_dict['white_king_open_files'] * king_open_files_weight) +
-                    (castling_bonus if feature_dict['white_king_castled_kingside'] or feature_dict['white_king_castled_queenside'] else 0)
-                )
-            else:
-                feature_dict['white_king_safety'] = 0
-
-            if black_king_square is not None:
-                feature_dict['black_king_safety'] = (
-                    (feature_dict['black_pawn_shield'] * pawn_shield_weight) + 
-                    (feature_dict['black_king_attackers'] * king_attackers_weight) + 
-                    (feature_dict['black_king_open_files'] * king_open_files_weight) +
-                    (castling_bonus if feature_dict['black_king_castled_kingside'] or feature_dict['black_king_castled_queenside'] else 0)
-                )
-            else:
-                feature_dict['black_king_safety'] = 0
-
-            # 6. Development features
-            white_knights_developed = sum(1 for s, p in pieces.items()
-                                        if p.piece_type == chess.KNIGHT and p.color == chess.WHITE
-                                        and not chess.square_rank(s) == 0)  # Not on first rank
-            white_bishops_developed = sum(1 for s, p in pieces.items()
-                                        if p.piece_type == chess.BISHOP and p.color == chess.WHITE
-                                        and not chess.square_rank(s) == 0)  # Not on first rank
-
-            black_knights_developed = sum(1 for s, p in pieces.items()
-                                        if p.piece_type == chess.KNIGHT and p.color == chess.BLACK
-                                        and not chess.square_rank(s) == 7)  # Not on last rank
-            black_bishops_developed = sum(1 for s, p in pieces.items()
-                                        if p.piece_type == chess.BISHOP and p.color == chess.BLACK
-                                        and not chess.square_rank(s) == 7)  # Not on last rank
-
-            feature_dict['white_minor_pieces_developed'] = white_knights_developed + white_bishops_developed
-            feature_dict['black_minor_pieces_developed'] = black_knights_developed + black_bishops_developed
-
-            # 7. Enhanced mobility features
-            # Initialize mobility counters for each piece type
-            white_mobility = {
-                'pawn': 0,
-                'knight': 0,
-                'bishop': 0,
-                'rook': 0,
-                'queen': 0,
-                'king': 0,
-                'total': 0
-            }
-            black_mobility = {
-                'pawn': 0,
-                'knight': 0,
-                'bishop': 0,
-                'rook': 0,
-                'queen': 0,
-                'king': 0,
-                'total': 0
-            }
-
-            # Piece type names for mapping
-            piece_names = ['pawn', 'knight', 'bishop', 'rook', 'queen', 'king']
-
-            # Count legal moves for each piece with context
-            for square, piece in pieces.items():
-                # Create a new board with just this piece to count its moves
-                temp_board = chess.Board(None)
-                temp_board.set_piece_at(square, piece)
-
-                # Set the turn to match the piece color
-                temp_board.turn = piece.color
-
-                # Count legal moves
-                moves = list(temp_board.legal_moves)
-                piece_name = piece_names[piece.piece_type - 1]
-
-                if piece.color == chess.WHITE:
-                    white_mobility[piece_name] += len(moves)
-                    white_mobility['total'] += len(moves)
-                else:
-                    black_mobility[piece_name] += len(moves)
-                    black_mobility['total'] += len(moves)
-
-            # Add individual piece type mobility to features
-            for piece_name in piece_names:
-                feature_dict[f'white_{piece_name}_mobility'] = white_mobility[piece_name]
-                feature_dict[f'black_{piece_name}_mobility'] = black_mobility[piece_name]
-
-            # Add total mobility
-            feature_dict['white_mobility'] = white_mobility['total']
-            feature_dict['black_mobility'] = black_mobility['total']
-            feature_dict['mobility_balance'] = white_mobility['total'] - black_mobility['total']
-
-            # Calculate mobility ratios for major pieces
-            feature_dict['white_minor_piece_mobility_ratio'] = (
-                (white_mobility['knight'] + white_mobility['bishop']) / 
-                max(1, white_mobility['total'] - white_mobility['pawn'] - white_mobility['king'])
-            )
-            feature_dict['black_minor_piece_mobility_ratio'] = (
-                (black_mobility['knight'] + black_mobility['bishop']) / 
-                max(1, black_mobility['total'] - black_mobility['pawn'] - black_mobility['king'])
-            )
-
-            # Calculate mobility advantage by piece type
-            for piece_name in piece_names:
-                feature_dict[f'{piece_name}_mobility_advantage'] = (
-                    white_mobility[piece_name] - black_mobility[piece_name]
-                )
-
-            # 8. Tactical pattern recognition
-            # Pins
-            white_pins = detect_pins(board, chess.WHITE)
-            black_pins = detect_pins(board, chess.BLACK)
-
-            # Add pin features
-            for piece_name in ['pawn', 'knight', 'bishop', 'rook', 'queen']:
-                feature_dict[f'white_pinned_{piece_name}s'] = white_pins[piece_name]
-                feature_dict[f'black_pinned_{piece_name}s'] = black_pins[piece_name]
-
-            feature_dict['white_total_pinned_pieces'] = white_pins['total']
-            feature_dict['black_total_pinned_pieces'] = black_pins['total']
-
-            # Forks
-            white_forks = detect_forks(board, chess.WHITE)
-            black_forks = detect_forks(board, chess.BLACK)
-
-            # Add fork features
-            for fork_type in ['knight_forks', 'pawn_forks', 'bishop_forks', 'rook_forks', 'queen_forks', 'total_forks']:
-                feature_dict[f'white_{fork_type}'] = white_forks[fork_type]
-                feature_dict[f'black_{fork_type}'] = black_forks[fork_type]
-
-            # Discovered attacks
-            feature_dict['white_discovered_attacks'] = detect_discovered_attacks(board, chess.WHITE)
-            feature_dict['black_discovered_attacks'] = detect_discovered_attacks(board, chess.BLACK)
-
-            # Tactical advantage metrics
-            feature_dict['tactical_advantage_pins'] = white_pins['total'] - black_pins['total']
-            feature_dict['tactical_advantage_forks'] = white_forks['total_forks'] - black_forks['total_forks']
-            feature_dict['tactical_advantage_discovered'] = feature_dict['white_discovered_attacks'] - feature_dict['black_discovered_attacks']
-
-            # Overall tactical advantage - using weights from configuration
-            tactical_weights = get_config()['feature_engineering']['tactical_advantage_weights']
-            feature_dict['overall_tactical_advantage'] = (
-                feature_dict['tactical_advantage_pins'] * tactical_weights['pins'] + 
-                feature_dict['tactical_advantage_forks'] * tactical_weights['forks'] + 
-                feature_dict['tactical_advantage_discovered'] * tactical_weights['discovered_attacks']
-            )
-
+    # Prepare input for parallel feature extraction
+    idx_board_fen_tuples = [(idx, boards[idx], fen) for idx, fen in idx_fen_tuples]
+
+    # Process feature extraction in parallel
+    features = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=n_threads) as executor:
+        # Process results as they complete
+        for feature_dict in tqdm(executor.map(extract_features_from_board, idx_board_fen_tuples), 
+                                total=len(idx_board_fen_tuples), desc="Extracting features"):
             features.append(feature_dict)
-
-        except Exception as e:
-            print(f"Error extracting features for FEN {fen}: {e}")
-            features.append({'idx': idx})
 
     # Create DataFrame from features
     fen_features_df = pd.DataFrame(features).set_index('idx')
