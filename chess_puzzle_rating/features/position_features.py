@@ -21,6 +21,8 @@ import pandas as pd
 import numpy as np
 from tqdm import tqdm
 from collections import Counter, defaultdict
+import concurrent.futures
+import os
 from ..utils.config import get_config
 
 
@@ -350,9 +352,36 @@ def detect_discovered_attacks(board, color):
     return discovered_attacks
 
 
+def process_single_fen(idx_fen):
+    """
+    Process a single FEN string and extract features.
+
+    Parameters
+    ----------
+    idx_fen : tuple
+        Tuple containing (idx, fen)
+
+    Returns
+    -------
+    dict
+        Dictionary with extracted features
+    """
+    idx, fen = idx_fen
+    feature_dict = {'idx': idx}
+
+    try:
+        board = chess.Board(fen)
+        # The rest of the feature extraction code will be executed in the main function
+        return idx, board
+    except Exception as e:
+        print(f"Error creating board for FEN {fen}: {e}")
+        return idx, None
+
+
 def extract_fen_features(df, fen_column='FEN'):
     """
     Extract rich positional features from FEN strings.
+    Uses parallel processing for improved performance.
 
     Parameters
     ----------
@@ -367,11 +396,40 @@ def extract_fen_features(df, fen_column='FEN'):
         DataFrame with extracted position features
     """
     print("Extracting position features from FEN...")
+
+    # Get configuration for internal parallelization
+    config = get_config()
+    performance_config = config.get('performance', {})
+    parallel_config = performance_config.get('parallel', {})
+
+    # Determine the number of threads to use for internal parallelization
+    # Use the max_threads_per_worker setting from the configuration
+    max_threads = parallel_config.get('max_threads_per_worker', 2)
+    # Use at least 2 threads but no more than max_threads
+    n_threads = max(2, min(max_threads, os.cpu_count() or 1))
+
+    # Prepare the list of (idx, fen) tuples
+    idx_fen_tuples = list(df[fen_column].items())
     features = []
 
-    for idx, fen in tqdm(df[fen_column].items(), total=len(df)):
+    # Process FEN strings in parallel using ThreadPoolExecutor to create board objects
+    print(f"Using {n_threads} threads for parallel FEN processing")
+    boards = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=n_threads) as executor:
+        # Process results as they complete
+        for idx, board in tqdm(executor.map(process_single_fen, idx_fen_tuples), total=len(idx_fen_tuples), desc="Creating board objects"):
+            boards[idx] = board
+
+    # Now process each board to extract features
+    for idx, fen in tqdm(idx_fen_tuples, total=len(idx_fen_tuples), desc="Extracting features"):
         try:
-            board = chess.Board(fen)
+            # Use the board object we already created in parallel
+            board = boards[idx]
+            if board is None:
+                # Skip this FEN if we couldn't create a board
+                features.append({'idx': idx})
+                continue
+
             feature_dict = {'idx': idx}
 
             # 1. Piece count features
