@@ -6,19 +6,20 @@ import chess
 import pandas as pd
 import numpy as np
 from tqdm import tqdm
+from collections import defaultdict
 
 
 def extract_opening_move_features(df, moves_column='Moves'):
     """
     Extract features from the opening moves of each puzzle.
-    
+
     Parameters
     ----------
     df : pandas.DataFrame
         DataFrame containing chess puzzles with move sequences
     moves_column : str, optional
         Name of the column containing move sequences, by default 'Moves'
-        
+
     Returns
     -------
     pandas.DataFrame
@@ -160,14 +161,14 @@ def extract_opening_move_features(df, moves_column='Moves'):
 def infer_eco_codes(df, moves_column='Moves'):
     """
     Infer ECO codes from move sequences.
-    
+
     Parameters
     ----------
     df : pandas.DataFrame
         DataFrame containing chess puzzles with move sequences
     moves_column : str, optional
         Name of the column containing move sequences, by default 'Moves'
-        
+
     Returns
     -------
     pandas.DataFrame
@@ -280,3 +281,179 @@ def infer_eco_codes(df, moves_column='Moves'):
 
     print(f"Inferred ECO codes with {eco_features_df.shape[1]} features")
     return eco_features_df
+
+
+def analyze_move_sequence(df, fen_column='FEN', moves_column='Moves'):
+    """
+    Analyze move sequences to extract advanced features:
+    - Move forcing factors (checks, captures, threats)
+    - Material sacrifices in solutions
+    - Move depth complexity
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        DataFrame containing chess puzzles with FEN positions and move sequences
+    fen_column : str, optional
+        Name of the column containing FEN strings, by default 'FEN'
+    moves_column : str, optional
+        Name of the column containing move sequences, by default 'Moves'
+
+    Returns
+    -------
+    pandas.DataFrame
+        DataFrame with extracted move sequence analysis features
+    """
+    print("Analyzing move sequences for forcing factors, sacrifices, and complexity...")
+    features = []
+
+    for idx, row in tqdm(df.iterrows(), total=len(df)):
+        feature_dict = {'idx': idx}
+
+        try:
+            # Get FEN and moves
+            fen = row[fen_column] if fen_column in row and not pd.isna(row[fen_column]) else None
+            moves_str = row[moves_column] if moves_column in row and not pd.isna(row[moves_column]) else None
+
+            if fen is None or moves_str is None or not moves_str:
+                features.append(feature_dict)
+                continue
+
+            # Initialize board from FEN
+            board = chess.Board(fen)
+
+            # Normalize move notation
+            moves_str = moves_str.replace('O-O-O', 'Qa1').replace('O-O', 'Kg1')  # Replace castling for parsing
+            moves = moves_str.split()
+
+            # Initialize counters
+            checks = 0
+            captures = 0
+            threats = 0
+            material_sacrifices = 0
+            max_depth = 0
+
+            # Material values for sacrifice detection
+            material_values = {1: 1, 2: 3, 3: 3, 4: 5, 5: 9, 6: 0}  # Standard piece values (king=0)
+
+            # Track material balance changes
+            material_balance_before = 0
+            for square, piece in board.piece_map().items():
+                value = material_values[piece.piece_type]
+                if piece.color == chess.WHITE:
+                    material_balance_before += value
+                else:
+                    material_balance_before -= value
+
+            # Process each move
+            for i, move_str in enumerate(moves):
+                # Try to parse the move
+                try:
+                    # Clean up move string (remove check/mate symbols)
+                    clean_move_str = move_str.replace('+', '').replace('#', '')
+
+                    # Parse move
+                    move = None
+                    for m in board.legal_moves:
+                        if clean_move_str in board.san(m):
+                            move = m
+                            break
+
+                    if move is None:
+                        continue
+
+                    # Check if move is a check
+                    if board.gives_check(move):
+                        checks += 1
+
+                    # Check if move is a capture
+                    if board.is_capture(move):
+                        captures += 1
+
+                    # Material balance before move
+                    pre_move_balance = 0
+                    for square, piece in board.piece_map().items():
+                        value = material_values[piece.piece_type]
+                        if piece.color == chess.WHITE:
+                            pre_move_balance += value
+                        else:
+                            pre_move_balance -= value
+
+                    # Make the move
+                    board.push(move)
+
+                    # Material balance after move
+                    post_move_balance = 0
+                    for square, piece in board.piece_map().items():
+                        value = material_values[piece.piece_type]
+                        if piece.color == chess.WHITE:
+                            post_move_balance += value
+                        else:
+                            post_move_balance -= value
+
+                    # Check for material sacrifice
+                    # A sacrifice is when a player makes a move that loses material
+                    # but potentially gains positional advantage
+                    is_white_move = (i % 2 == 0)
+                    if is_white_move and post_move_balance < pre_move_balance:
+                        material_sacrifices += 1
+                    elif not is_white_move and post_move_balance > pre_move_balance:
+                        material_sacrifices += 1
+
+                    # Check for threats (attacking opponent's pieces)
+                    current_threats = 0
+                    for square, piece in board.piece_map().items():
+                        # Only count threats to opponent's pieces
+                        if piece.color != board.turn:
+                            attackers = board.attackers(board.turn, square)
+                            if attackers:
+                                current_threats += 1
+
+                    if current_threats > 0:
+                        threats += 1
+
+                    # Update max depth
+                    max_depth = max(max_depth, i + 1)
+
+                except Exception as e:
+                    # If we can't parse the move, just continue to the next one
+                    continue
+
+            # Calculate move forcing factor (weighted sum of checks, captures, threats)
+            move_forcing_factor = (2 * checks + captures + threats) / max(1, len(moves))
+
+            # Calculate material sacrifice ratio
+            sacrifice_ratio = material_sacrifices / max(1, len(moves))
+
+            # Calculate move depth complexity
+            # This is a simple measure based on the number of moves and forcing factors
+            depth_complexity = max_depth * (1 + move_forcing_factor)
+
+            # Add features to dictionary
+            feature_dict['move_checks_count'] = checks
+            feature_dict['move_captures_count'] = captures
+            feature_dict['move_threats_count'] = threats
+            feature_dict['move_forcing_factor'] = move_forcing_factor
+            feature_dict['material_sacrifices_count'] = material_sacrifices
+            feature_dict['material_sacrifice_ratio'] = sacrifice_ratio
+            feature_dict['move_depth'] = max_depth
+            feature_dict['move_depth_complexity'] = depth_complexity
+
+            # Add features for the distribution of forcing moves
+            feature_dict['pct_moves_with_check'] = checks / max(1, len(moves))
+            feature_dict['pct_moves_with_capture'] = captures / max(1, len(moves))
+            feature_dict['pct_moves_with_threat'] = threats / max(1, len(moves))
+
+        except Exception as e:
+            print(f"Error analyzing move sequence for index {idx}: {e}")
+
+        features.append(feature_dict)
+
+    # Create DataFrame from features
+    move_analysis_df = pd.DataFrame(features).set_index('idx')
+
+    # Fill NaN values
+    move_analysis_df = move_analysis_df.fillna(0)
+
+    print(f"Extracted {move_analysis_df.shape[1]} features from move sequence analysis")
+    return move_analysis_df

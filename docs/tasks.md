@@ -45,16 +45,16 @@ This document contains a prioritized checklist of actionable improvement tasks f
 
 ## 3. Feature Engineering Enhancements
 
-[ ] Improve position feature extraction
-   - [ ] Implement advanced pawn structure analysis (chains, islands)
-   - [ ] Add piece mobility metrics
-   - [ ] Enhance king safety evaluation with attack pattern detection
-   - [ ] Implement tactical pattern recognition (pins, forks, discovered attacks)
+[x] Improve position feature extraction
+   - [x] Implement advanced pawn structure analysis (chains, islands)
+   - [x] Add piece mobility metrics
+   - [x] Enhance king safety evaluation with attack pattern detection
+   - [x] Implement tactical pattern recognition (pins, forks, discovered attacks)
 
-[ ] Enhance move sequence analysis
-   - [ ] Calculate move forcing factors (checks, captures, threats)
-   - [ ] Detect material sacrifices in solutions
-   - [ ] Analyze move depth complexity
+[x] Enhance move sequence analysis
+   - [x] Calculate move forcing factors (checks, captures, threats)
+   - [x] Detect material sacrifices in solutions
+   - [x] Analyze move depth complexity
 
 [ ] Improve opening tag prediction
    - [ ] Implement ensemble approach for tag prediction

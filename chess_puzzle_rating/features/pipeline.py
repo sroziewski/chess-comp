@@ -7,7 +7,7 @@ import numpy as np
 from tqdm import tqdm
 
 from chess_puzzle_rating.features.position_features import extract_fen_features
-from chess_puzzle_rating.features.move_features import extract_opening_move_features, infer_eco_codes
+from chess_puzzle_rating.features.move_features import extract_opening_move_features, infer_eco_codes, analyze_move_sequence
 from chess_puzzle_rating.features.opening_tags import predict_missing_opening_tags
 from chess_puzzle_rating.features.opening_features import engineer_chess_opening_features
 
@@ -15,14 +15,14 @@ from chess_puzzle_rating.features.opening_features import engineer_chess_opening
 def complete_feature_engineering(df, tag_column='OpeningTags'):
     """
     Complete pipeline for feature engineering with opening tag prediction.
-    
+
     Parameters
     ----------
     df : pandas.DataFrame
         DataFrame containing chess puzzles
     tag_column : str, optional
         Name of the column containing opening tags, by default 'OpeningTags'
-        
+
     Returns
     -------
     tuple
@@ -35,6 +35,7 @@ def complete_feature_engineering(df, tag_column='OpeningTags'):
     position_features = extract_fen_features(df)
     move_features = extract_opening_move_features(df)
     eco_features = infer_eco_codes(df)
+    move_analysis_features = analyze_move_sequence(df)
 
     # Step 2: Predict missing opening tags
     predictions, model, combined_features = predict_missing_opening_tags(df, tag_column)
@@ -83,7 +84,8 @@ def complete_feature_engineering(df, tag_column='OpeningTags'):
         opening_features,
         position_features,
         move_features,
-        eco_features
+        eco_features,
+        move_analysis_features
     ], axis=1)
 
     # Fill any remaining NaN values
