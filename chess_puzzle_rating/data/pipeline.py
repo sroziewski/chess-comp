@@ -16,12 +16,12 @@ import logging
 from typing import Dict, Any, Optional, Tuple, List, Union
 from tqdm import tqdm
 
-from chess_puzzle_rating.utils.config import get_config
-from chess_puzzle_rating.utils.progress import (
+from ..utils.config import get_config
+from ..utils.progress import (
     setup_logging, get_logger, log_time, ProgressTracker, 
     track_progress, record_metric, create_performance_dashboard
 )
-from chess_puzzle_rating.features.pipeline import complete_feature_engineering
+from ..features.pipeline import complete_feature_engineering
 
 
 class DataValidationError(Exception):
