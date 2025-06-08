@@ -21,6 +21,7 @@ import pandas as pd
 import numpy as np
 from tqdm import tqdm
 from collections import Counter, defaultdict
+from ..utils.config import get_config
 
 
 def identify_pawn_chains(pawns):
@@ -389,8 +390,16 @@ def extract_fen_features(df, fen_column='FEN'):
                 piece_name = ['pawn', 'knight', 'bishop', 'rook', 'queen', 'king'][piece.piece_type - 1]
                 feature_dict[f'piece_count_{color_name}_{piece_name}'] += 1
 
-            # 2. Material balance
-            material_values = {1: 1, 2: 3, 3: 3, 4: 5, 5: 9, 6: 0}  # Standard piece values (king=0)
+            # 2. Material balance - using values from configuration
+            config_values = get_config()['feature_engineering']['material_values']
+            material_values = {
+                chess.PAWN: config_values['pawn'],
+                chess.KNIGHT: config_values['knight'],
+                chess.BISHOP: config_values['bishop'],
+                chess.ROOK: config_values['rook'],
+                chess.QUEEN: config_values['queen'],
+                chess.KING: config_values['king']
+            }
             white_material = 0
             black_material = 0
 
@@ -602,23 +611,29 @@ def extract_fen_features(df, fen_column='FEN'):
                 feature_dict['black_pawn_shield'] = 0
                 feature_dict['black_king_open_files'] = 0
 
-            # King safety score (higher is safer)
+            # King safety score (higher is safer) - using weights from configuration
+            king_safety_weights = get_config()['feature_engineering']['king_safety_weights']
+            pawn_shield_weight = king_safety_weights['pawn_shield']
+            king_attackers_weight = king_safety_weights['king_attackers']
+            king_open_files_weight = king_safety_weights['king_open_files']
+            castling_bonus = king_safety_weights['castling_bonus']
+
             if white_king_square is not None:
                 feature_dict['white_king_safety'] = (
-                    (feature_dict['white_pawn_shield'] * 2) - 
-                    (feature_dict['white_king_attackers'] * 3) - 
-                    (feature_dict['white_king_open_files'] * 2) +
-                    (4 if feature_dict['white_king_castled_kingside'] or feature_dict['white_king_castled_queenside'] else 0)
+                    (feature_dict['white_pawn_shield'] * pawn_shield_weight) + 
+                    (feature_dict['white_king_attackers'] * king_attackers_weight) + 
+                    (feature_dict['white_king_open_files'] * king_open_files_weight) +
+                    (castling_bonus if feature_dict['white_king_castled_kingside'] or feature_dict['white_king_castled_queenside'] else 0)
                 )
             else:
                 feature_dict['white_king_safety'] = 0
 
             if black_king_square is not None:
                 feature_dict['black_king_safety'] = (
-                    (feature_dict['black_pawn_shield'] * 2) - 
-                    (feature_dict['black_king_attackers'] * 3) - 
-                    (feature_dict['black_king_open_files'] * 2) +
-                    (4 if feature_dict['black_king_castled_kingside'] or feature_dict['black_king_castled_queenside'] else 0)
+                    (feature_dict['black_pawn_shield'] * pawn_shield_weight) + 
+                    (feature_dict['black_king_attackers'] * king_attackers_weight) + 
+                    (feature_dict['black_king_open_files'] * king_open_files_weight) +
+                    (castling_bonus if feature_dict['black_king_castled_kingside'] or feature_dict['black_king_castled_queenside'] else 0)
                 )
             else:
                 feature_dict['black_king_safety'] = 0
@@ -742,11 +757,12 @@ def extract_fen_features(df, fen_column='FEN'):
             feature_dict['tactical_advantage_forks'] = white_forks['total_forks'] - black_forks['total_forks']
             feature_dict['tactical_advantage_discovered'] = feature_dict['white_discovered_attacks'] - feature_dict['black_discovered_attacks']
 
-            # Overall tactical advantage
+            # Overall tactical advantage - using weights from configuration
+            tactical_weights = get_config()['feature_engineering']['tactical_advantage_weights']
             feature_dict['overall_tactical_advantage'] = (
-                feature_dict['tactical_advantage_pins'] + 
-                feature_dict['tactical_advantage_forks'] * 2 + 
-                feature_dict['tactical_advantage_discovered'] * 3
+                feature_dict['tactical_advantage_pins'] * tactical_weights['pins'] + 
+                feature_dict['tactical_advantage_forks'] * tactical_weights['forks'] + 
+                feature_dict['tactical_advantage_discovered'] * tactical_weights['discovered_attacks']
             )
 
             features.append(feature_dict)

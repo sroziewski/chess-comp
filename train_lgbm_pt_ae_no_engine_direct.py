@@ -21,35 +21,43 @@ from torch.utils.data import TensorDataset, DataLoader
 # --- Progress Bar Import ---
 from tqdm.auto import tqdm
 
+# --- Configuration Import ---
+from chess_puzzle_rating.utils.config import get_config
+
 tqdm.pandas()
 
 warnings.filterwarnings('ignore', category=UserWarning, module='chevy')
 warnings.filterwarnings('ignore', category=FutureWarning)
 
-# --- Configuration ---
-TRAIN_FILE = '/raid/sroziewski/chess/training_data_02_01.csv'
-TEST_FILE = '/raid/sroziewski/chess/testing_data_cropped.csv'
-SUBMISSION_FILE = '/raid/sroziewski/chess/submission_lgbm_pt_ae_no_engine_direct_v1.txt'  # Updated name
-N_SPLITS_LGBM = 5
-RANDOM_STATE = 42
-LGBM_EARLY_STOPPING_ROUNDS = 100
+# --- Load Configuration ---
+config = get_config()
+
+# --- Data Paths ---
+TRAIN_FILE = config['data_paths']['train_file']
+TEST_FILE = config['data_paths']['test_file']
+SUBMISSION_FILE = config['data_paths']['submission_file']
+
+# --- Training Parameters ---
+N_SPLITS_LGBM = config['training']['n_splits_lgbm']
+RANDOM_STATE = config['training']['random_state']
+LGBM_EARLY_STOPPING_ROUNDS = config['training']['lgbm_early_stopping_rounds']
 
 # --- PyTorch Autoencoder Training Config ---
-AE_EPOCHS = 40
-AE_BATCH_SIZE_PER_GPU = 2048  # Adjusted for better GPU util
-AE_LEARNING_RATE = 1e-3
-AE_VALID_SPLIT = 0.1
-AE_EARLY_STOPPING_PATIENCE = 5  # Increased patience slightly
-MODEL_SAVE_DIR = "trained_models_no_engine_direct_v1"
+AE_EPOCHS = config['autoencoder']['epochs']
+AE_BATCH_SIZE_PER_GPU = config['autoencoder']['batch_size_per_gpu']
+AE_LEARNING_RATE = config['autoencoder']['learning_rate']
+AE_VALID_SPLIT = config['autoencoder']['valid_split']
+AE_EARLY_STOPPING_PATIENCE = config['autoencoder']['early_stopping_patience']
+MODEL_SAVE_DIR = config['autoencoder']['model_save_dir']
 AE_MODEL_SAVE_DIR = os.path.join(MODEL_SAVE_DIR, "autoencoders")
 LGBM_MODEL_SAVE_DIR = os.path.join(MODEL_SAVE_DIR, "lightgbm_folds")
-FORCE_RETRAIN_AES = False
+FORCE_RETRAIN_AES = config['autoencoder']['force_retrain']
 
 os.makedirs(AE_MODEL_SAVE_DIR, exist_ok=True)
 os.makedirs(LGBM_MODEL_SAVE_DIR, exist_ok=True)
 
 # --- GPU Configuration ---
-TARGET_NUM_GPUS = 4
+TARGET_NUM_GPUS = config['gpu']['target_num_gpus']
 if torch.cuda.is_available():
     AVAILABLE_GPUS = torch.cuda.device_count()
     print(f"Found {AVAILABLE_GPUS} CUDA GPUs.")
@@ -75,8 +83,8 @@ else:
 DEVICE = torch.device(PRIMARY_DEVICE_STR)
 
 # --- PyTorch Autoencoder Definition ---
-PROB_SEQ_LENGTH = 11
-EMBEDDING_DIM_PROB = 16
+PROB_SEQ_LENGTH = config['autoencoder']['sequence_length']
+EMBEDDING_DIM_PROB = config['autoencoder']['embedding_dim']
 
 
 class ProbAutoencoder(nn.Module):
@@ -211,9 +219,9 @@ def train_autoencoder(auto_model_base, train_loader, val_loader, epochs, lr, pat
     # Reconstruction loss
     recon_criterion = nn.MSELoss(reduction='sum')
 
-    # Loss weights
-    kl_weight = 0.001  # Weight for KL divergence loss
-    contrastive_weight = 0.1  # Weight for contrastive loss
+    # Loss weights from configuration
+    kl_weight = config['autoencoder']['kl_weight']  # Weight for KL divergence loss
+    contrastive_weight = config['autoencoder']['contrastive_weight']  # Weight for contrastive loss
 
     optimizer = optim.Adam(auto_model_train.parameters(), lr=lr)
     best_val_loss = float('inf')
@@ -628,12 +636,16 @@ if __name__ == '__main__':
     del moves_features_df
     gc.collect()
 
-    themes_df = process_text_tags(combined_df['Themes'], prefix='theme', min_df=20)
+    # Use configuration values for text vectorization
+    themes_min_df = config['feature_engineering']['text_vectorization']['themes_min_df']
+    openings_min_df = config['feature_engineering']['text_vectorization']['openings_min_df']
+
+    themes_df = process_text_tags(combined_df['Themes'], prefix='theme', min_df=themes_min_df)
     combined_df = pd.concat([combined_df, themes_df], axis=1)
     del themes_df
     gc.collect()
 
-    openings_df = process_text_tags(combined_df['OpeningTags'], prefix='opening', min_df=10)
+    openings_df = process_text_tags(combined_df['OpeningTags'], prefix='opening', min_df=openings_min_df)
     combined_df = pd.concat([combined_df, openings_df], axis=1)
     del openings_df
     gc.collect()
@@ -704,22 +716,8 @@ if __name__ == '__main__':
     oof_preds = np.zeros(X_train.shape[0])
     test_preds_lgbm = np.zeros(X_test.shape[0])
 
-    lgb_params = {
-        'objective': 'regression',  # Corrected!
-        'metric': 'rmse',
-        'n_estimators': 3000,
-        'learning_rate': 0.01,
-        'feature_fraction': 0.7,
-        'bagging_fraction': 0.7,
-        'bagging_freq': 1,
-        'lambda_l1': 0.1,
-        'lambda_l2': 0.1,
-        'num_leaves': 42,
-        'min_child_samples': 20,
-        'verbose': -1,
-        'n_jobs': -1,
-        'boosting_type': 'gbdt',
-    }
+    # Load LightGBM parameters from configuration
+    lgb_params = config['lgbm_params'].copy()
 
     for fold, (train_idx, val_idx) in enumerate(
             tqdm(kf.split(X_train, y_train), total=N_SPLITS_LGBM, desc="LGBM KFold Training")):

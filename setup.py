@@ -12,6 +12,8 @@ setup(
         "scikit-learn",
         "lightgbm",
         "torch",
+        "pyyaml",
+        "jsonschema",
     ],
     author="Chess Puzzle Rating Team",
     author_email="team@example.com",
