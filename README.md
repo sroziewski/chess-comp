@@ -4,7 +4,7 @@ For every puzzle in both datasets we will now provide 22 success probabilitity p
 
 Different data and bigger datasets, this time the training dataset has over 4.5 million instances, compared to 3.7 million in the first edition.
 
- 
+
 
 In a chess puzzle, the player assumes a role of White or Black in a particular configuration of pieces on a chessboard. The goal for the puzzle taker is to find the best sequence of moves, either outright checkmating the opponent or obtaining a winning material advantage.
 
@@ -60,7 +60,7 @@ Predicted success probabilities representing chance of correctly solving a puzzl
 float	
 0.2640107
 
- 
+
 
 Based on the above data, the challenge contestants are expected to predict the Rating field (which will be kept secret).
 
@@ -80,7 +80,7 @@ int
 
 1760
 
- 
+
 
 The training dataset contains all of the above fields, and also a few additional ones listed below.
 
@@ -140,3 +140,91 @@ dymitr
 8	
 Mathurin
 107528.4306	2025-05-22 14:39:25
+
+## Project Structure and Usage
+
+This repository contains code for predicting chess puzzle ratings. The code is organized into a modular package structure with the following components:
+
+### Data Pipeline
+
+The project includes a unified data pipeline that handles data loading, preprocessing, validation, and feature engineering with checkpoints for intermediate results. The pipeline is implemented in the `chess_puzzle_rating.data.pipeline` module.
+
+To use the data pipeline:
+
+```python
+from chess_puzzle_rating.data.pipeline import run_data_pipeline
+
+# Run the complete pipeline
+X_train, X_test, y_train, test_ids = run_data_pipeline()
+
+# Use the resulting datasets for model training and prediction
+```
+
+The pipeline performs the following steps:
+1. **Data Loading**: Loads training and test data from configured paths
+2. **Data Validation**: Validates the data for common issues like missing required columns
+3. **Preprocessing**: Handles missing values and combines training and test data
+4. **Feature Engineering**: Applies feature engineering using the existing pipeline
+5. **Train/Test Split**: Prepares the final training and test datasets
+
+Checkpoints are saved at each stage of the pipeline, allowing for easy resumption of processing and inspection of intermediate results.
+
+### Configuration
+
+The project uses a centralized configuration system with settings stored in `config.yaml`. The configuration includes:
+
+- Data paths
+- Training parameters
+- Autoencoder configuration
+- GPU settings
+- LightGBM parameters
+- Feature engineering parameters
+- Pipeline configuration
+- Performance optimization settings
+
+### Performance Optimizations
+
+The project includes several performance optimizations to speed up feature extraction and model training:
+
+#### Parallel Feature Extraction
+
+The feature extraction pipeline has been optimized to use parallel processing, significantly reducing the time required to extract features from chess positions and move sequences. The number of worker processes and threads per worker can be configured in the `performance.parallel` section of the configuration file.
+
+```yaml
+performance:
+  parallel:
+    n_workers: null  # null = use all available CPU cores
+    max_threads_per_worker: 4
+```
+
+#### Caching for Expensive Computations
+
+Computationally expensive feature extraction functions are now cached to avoid redundant calculations when processing the same positions multiple times. Caching can be configured in the `performance.caching` section of the configuration file.
+
+```yaml
+performance:
+  caching:
+    enabled: true
+    cache_dir: "~/.chess_puzzle_rating_cache"
+    max_cache_size_gb: 10
+    cache_lifetime_days: 30
+```
+
+#### Mixed Precision Training for Neural Networks
+
+The neural network training has been optimized to use mixed precision (FP16) when a CUDA GPU is available, which can significantly speed up training and reduce memory usage. Mixed precision settings can be configured in the `performance.mixed_precision` section of the configuration file.
+
+```yaml
+performance:
+  mixed_precision:
+    enabled: true
+    initial_scale: 65536
+```
+
+To run the test script for the data pipeline:
+
+```bash
+python test_data_pipeline.py
+```
+
+This will run the complete pipeline and print information about the resulting datasets.

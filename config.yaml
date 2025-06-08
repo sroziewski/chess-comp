@@ -1,0 +1,146 @@
+# Chess Puzzle Rating Prediction Configuration
+
+# Data paths
+data_paths:
+  train_file: "/raid/sroziewski/chess/training_data_02_01.csv"
+  test_file: "/raid/sroziewski/chess/testing_data_cropped.csv"
+  submission_file: "/raid/sroziewski/chess/submission_lgbm_pt_ae_no_engine_direct_v1.txt"
+
+# Training parameters
+training:
+  n_splits_lgbm: 5
+  random_state: 42
+  lgbm_early_stopping_rounds: 100
+
+# Autoencoder configuration
+autoencoder:
+  epochs: 40
+  batch_size_per_gpu: 2048
+  learning_rate: 1.0e-3
+  valid_split: 0.1
+  early_stopping_patience: 5
+  model_save_dir: "trained_models_no_engine_direct_v1"
+  force_retrain: false
+  embedding_dim: 16
+  sequence_length: 11
+  kl_weight: 0.001
+  contrastive_weight: 0.1
+
+# GPU configuration
+gpu:
+  target_num_gpus: 4
+
+# LightGBM parameters
+lgbm_params:
+  objective: "regression"
+  metric: "rmse"
+  n_estimators: 3000
+  learning_rate: 0.01
+  feature_fraction: 0.7
+  bagging_fraction: 0.7
+  bagging_freq: 1
+  lambda_l1: 0.1
+  lambda_l2: 0.1
+  num_leaves: 42
+  min_child_samples: 20
+  verbose: -1
+  n_jobs: -1
+  boosting_type: "gbdt"
+
+# Feature engineering parameters
+feature_engineering:
+  # Standard piece values
+  material_values:
+    pawn: 1
+    knight: 3
+    bishop: 3
+    rook: 5
+    queen: 9
+    king: 0
+
+  # King safety evaluation weights
+  king_safety_weights:
+    pawn_shield: 2
+    king_attackers: -3
+    king_open_files: -2
+    castling_bonus: 4
+
+  # Tactical advantage weights
+  tactical_advantage_weights:
+    pins: 1
+    forks: 2
+    discovered_attacks: 3
+
+  # Text vectorization parameters
+  text_vectorization:
+    themes_min_df: 20
+    openings_min_df: 10
+
+# Data pipeline configuration
+pipeline:
+  # Directory to store checkpoints
+  checkpoint_dir: "checkpoints"
+
+  # Data validation settings
+  validation:
+    required_columns: ["PuzzleId", "FEN", "Moves", "Rating"]
+    max_missing_values_pct: 0.2
+    rating_range: [500, 3500]
+
+# Performance optimization configuration
+performance:
+  # Parallel processing settings
+  parallel:
+    # Number of worker processes for feature extraction (null = use all available cores)
+    n_workers: null
+    # Maximum number of threads per worker
+    max_threads_per_worker: 4
+
+  # Caching settings
+  caching:
+    # Enable caching for expensive computations
+    enabled: true
+    # Directory to store cache files
+    cache_dir: "~/.chess_puzzle_rating_cache"
+    # Maximum cache size in GB
+    max_cache_size_gb: 10
+    # Cache lifetime in days (0 = never expire)
+    cache_lifetime_days: 30
+
+  # Mixed precision settings
+  mixed_precision:
+    # Enable mixed precision training
+    enabled: true
+    # Initial scale value for gradient scaler
+    initial_scale: 65536
+
+# Logging configuration
+logging:
+  # Directory to store log files
+  log_dir: "logs"
+  # Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+  log_level: "INFO"
+  # Whether to log to console
+  log_to_console: true
+  # Whether to log to file
+  log_to_file: true
+  # Name of the log file (null = auto-generated based on timestamp)
+  log_file_name: null
+
+# Progress tracking configuration
+progress_tracking:
+  # Enable progress tracking
+  enabled: true
+  # Interval (in percentage) at which to log progress
+  log_interval: 10
+  # Whether to store metrics for dashboard
+  store_metrics: true
+
+# Performance dashboards configuration
+dashboards:
+  # Enable performance dashboards
+  enabled: true
+  # Directory to save dashboards
+  output_dir: "dashboards"
+  # Whether to automatically generate dashboards at the end of training
+  auto_generate: true

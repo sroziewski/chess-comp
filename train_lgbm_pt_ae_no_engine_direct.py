@@ -10,6 +10,9 @@ import gc
 import warnings
 import os
 import shutil
+import time
+import datetime
+import logging
 
 # --- PyTorch Imports ---
 import torch
@@ -17,6 +20,7 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 from torch.utils.data import TensorDataset, DataLoader
+from torch.cuda.amp import autocast, GradScaler
 
 # --- Progress Bar Import ---
 from tqdm.auto import tqdm
@@ -24,18 +28,37 @@ from tqdm.auto import tqdm
 # --- Configuration Import ---
 from chess_puzzle_rating.utils.config import get_config
 
+# --- Progress Tracking Import ---
+from chess_puzzle_rating.utils.progress import (
+    setup_logging, get_logger, log_time, ProgressTracker, 
+    track_progress, record_metric, create_performance_dashboard
+)
+
 tqdm.pandas()
 
 warnings.filterwarnings('ignore', category=UserWarning, module='chevy')
 warnings.filterwarnings('ignore', category=FutureWarning)
 
-# --- Load Configuration ---
+# --- Initialize Logging ---
 config = get_config()
+logging_config = config.get('logging', {})
+logger = setup_logging(
+    log_dir=logging_config.get('log_dir', 'logs'),
+    log_level=getattr(logging, logging_config.get('log_level', 'INFO')),
+    log_to_console=logging_config.get('log_to_console', True),
+    log_to_file=logging_config.get('log_to_file', True),
+    log_file_name=logging_config.get('log_file_name', f"training_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
+)
 
 # --- Data Paths ---
 TRAIN_FILE = config['data_paths']['train_file']
 TEST_FILE = config['data_paths']['test_file']
 SUBMISSION_FILE = config['data_paths']['submission_file']
+
+logger.info("Starting LightGBM training with PyTorch autoencoder features")
+logger.info(f"Training data: {TRAIN_FILE}")
+logger.info(f"Test data: {TEST_FILE}")
+logger.info(f"Submission file: {SUBMISSION_FILE}")
 
 # --- Training Parameters ---
 N_SPLITS_LGBM = config['training']['n_splits_lgbm']
@@ -224,11 +247,26 @@ def train_autoencoder(auto_model_base, train_loader, val_loader, epochs, lr, pat
     contrastive_weight = config['autoencoder']['contrastive_weight']  # Weight for contrastive loss
 
     optimizer = optim.Adam(auto_model_train.parameters(), lr=lr)
+
+    # Get mixed precision configuration
+    mixed_precision_config = config.get('performance', {}).get('mixed_precision', {})
+    use_mixed_precision = mixed_precision_config.get('enabled', True) and DEVICE.type == 'cuda'
+
+    # Initialize gradient scaler for mixed precision training
+    scaler = None
+    if use_mixed_precision:
+        initial_scale = mixed_precision_config.get('initial_scale', 65536)
+        scaler = GradScaler(init_scale=initial_scale)
+
     best_val_loss = float('inf')
     epochs_no_improve = 0
     print(
         f"\n--- Training {model_name} on {DEVICE if not isinstance(auto_model_train, nn.DataParallel) else 'multiple GPUs'} ---")
     print(f"Model will be saved to: {model_save_path}")
+    if use_mixed_precision:
+        print(f"Using mixed precision training with initial scale: {initial_scale}")
+    else:
+        print("Mixed precision training disabled or not supported on this device")
 
     for epoch in range(epochs):
         auto_model_train.train()
@@ -243,23 +281,47 @@ def train_autoencoder(auto_model_base, train_loader, val_loader, epochs, lr, pat
             inputs = data_batch[0].to(DEVICE)
             optimizer.zero_grad()
 
-            # Forward pass with VAE
-            recon_x, z, mu, logvar, kl_div = auto_model_train(inputs)
+            if scaler is not None:
+                # Mixed precision forward pass
+                with autocast():
+                    # Forward pass with VAE
+                    recon_x, z, mu, logvar, kl_div = auto_model_train(inputs)
 
-            # Reconstruction loss
-            recon_loss = recon_criterion(recon_x, inputs) / inputs.size(0)
+                    # Reconstruction loss
+                    recon_loss = recon_criterion(recon_x, inputs) / inputs.size(0)
 
-            # KL divergence loss
-            kl_loss = kl_div.mean()
+                    # KL divergence loss
+                    kl_loss = kl_div.mean()
 
-            # Contrastive loss
-            contr_loss = contrastive_loss(z)
+                    # Contrastive loss
+                    contr_loss = contrastive_loss(z)
 
-            # Total loss
-            loss = recon_loss + kl_weight * kl_loss + contrastive_weight * contr_loss
+                    # Total loss
+                    loss = recon_loss + kl_weight * kl_loss + contrastive_weight * contr_loss
 
-            loss.backward()
-            optimizer.step()
+                # Scale gradients and backward pass
+                scaler.scale(loss).backward()
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                # Standard precision forward pass
+                # Forward pass with VAE
+                recon_x, z, mu, logvar, kl_div = auto_model_train(inputs)
+
+                # Reconstruction loss
+                recon_loss = recon_criterion(recon_x, inputs) / inputs.size(0)
+
+                # KL divergence loss
+                kl_loss = kl_div.mean()
+
+                # Contrastive loss
+                contr_loss = contrastive_loss(z)
+
+                # Total loss
+                loss = recon_loss + kl_weight * kl_loss + contrastive_weight * contr_loss
+
+                loss.backward()
+                optimizer.step()
 
             # Track losses
             train_loss += loss.item() * inputs.size(0)
@@ -291,20 +353,39 @@ def train_autoencoder(auto_model_base, train_loader, val_loader, epochs, lr, pat
             for data_batch in progress_bar_val:
                 inputs = data_batch[0].to(DEVICE)
 
-                # Forward pass with VAE
-                recon_x, z, mu, logvar, kl_div = auto_model_train(inputs)
+                if scaler is not None:
+                    # Mixed precision forward pass for validation
+                    with autocast():
+                        # Forward pass with VAE
+                        recon_x, z, mu, logvar, kl_div = auto_model_train(inputs)
 
-                # Reconstruction loss
-                recon_loss = recon_criterion(recon_x, inputs) / inputs.size(0)
+                        # Reconstruction loss
+                        recon_loss = recon_criterion(recon_x, inputs) / inputs.size(0)
 
-                # KL divergence loss
-                kl_loss = kl_div.mean()
+                        # KL divergence loss
+                        kl_loss = kl_div.mean()
 
-                # Contrastive loss
-                contr_loss = contrastive_loss(z)
+                        # Contrastive loss
+                        contr_loss = contrastive_loss(z)
 
-                # Total loss
-                loss = recon_loss + kl_weight * kl_loss + contrastive_weight * contr_loss
+                        # Total loss
+                        loss = recon_loss + kl_weight * kl_loss + contrastive_weight * contr_loss
+                else:
+                    # Standard precision forward pass
+                    # Forward pass with VAE
+                    recon_x, z, mu, logvar, kl_div = auto_model_train(inputs)
+
+                    # Reconstruction loss
+                    recon_loss = recon_criterion(recon_x, inputs) / inputs.size(0)
+
+                    # KL divergence loss
+                    kl_loss = kl_div.mean()
+
+                    # Contrastive loss
+                    contr_loss = contrastive_loss(z)
+
+                    # Total loss
+                    loss = recon_loss + kl_weight * kl_loss + contrastive_weight * contr_loss
 
                 # Track losses
                 val_loss += loss.item() * inputs.size(0)
@@ -489,6 +570,13 @@ def extract_embeddings_from_autoencoder(autoencoder_model, sequences_np, current
     actual_inference_batch_size = batch_size_per_gpu * num_gpus_for_inference if isinstance(model_for_inference,
                                                                                             nn.DataParallel) else batch_size_per_gpu
 
+    # Get mixed precision configuration
+    mixed_precision_config = config.get('performance', {}).get('mixed_precision', {})
+    use_mixed_precision = mixed_precision_config.get('enabled', True) and current_device.type == 'cuda'
+
+    if use_mixed_precision:
+        print("Using mixed precision for embedding extraction")
+
     dataset = TensorDataset(torch.tensor(sequences_np, dtype=torch.float32))
     loader = DataLoader(dataset, batch_size=actual_inference_batch_size, shuffle=False, num_workers=2,
                         pin_memory=(current_device.type == 'cuda'))
@@ -498,9 +586,16 @@ def extract_embeddings_from_autoencoder(autoencoder_model, sequences_np, current
     with torch.no_grad():
         for batch_data_tuple in tqdm(loader, desc="Extracting Embeddings", leave=False, unit="batch"):
             inputs = batch_data_tuple[0].to(current_device)
-            # VAE returns (recon_x, z, mu, logvar, kl_div)
-            # We use z (the sampled latent vector) as our embedding
-            outputs = model_for_inference(inputs)
+
+            if use_mixed_precision:
+                # Use mixed precision for inference
+                with autocast():
+                    # VAE returns (recon_x, z, mu, logvar, kl_div)
+                    # We use z (the sampled latent vector) as our embedding
+                    outputs = model_for_inference(inputs)
+            else:
+                # Standard precision inference
+                outputs = model_for_inference(inputs)
 
             # Extract the latent representation (z) which is the second element in the output tuple
             embeddings = outputs[1]  # z is at index 1
@@ -567,8 +662,19 @@ def process_text_tags(df_series, prefix, min_df=5):
 
 # --- Main Script ---
 if __name__ == '__main__':
-    print(f"Using PyTorch on device: {DEVICE} with {GPUS_TO_USE} GPU(s) for DataParallel if > 1.")
-    print("Loading data...")
+    # Record overall start time
+    overall_start_time = time.time()
+
+    logger.info(f"Using PyTorch on device: {DEVICE} with {GPUS_TO_USE} GPU(s) for DataParallel if > 1.")
+
+    # Record GPU configuration
+    record_metric("gpu_count", GPUS_TO_USE, "hardware")
+    record_metric("device_type", "cuda" if DEVICE.type == "cuda" else "cpu", "hardware")
+
+    # Step 1: Load data
+    logger.info("Step 1: Loading data...")
+    data_load_start = time.time()
+
     train_df_orig = pd.read_csv(TRAIN_FILE)
     test_df_orig = pd.read_csv(TEST_FILE)
     test_puzzle_ids = test_df_orig['PuzzleId']
@@ -579,6 +685,17 @@ if __name__ == '__main__':
         test_df_orig['Rating'] = np.nan
 
     combined_df = pd.concat([train_df_orig, test_df_orig], ignore_index=True, sort=False)
+
+    data_load_time = time.time() - data_load_start
+    logger.info(f"Data loaded in {data_load_time:.2f} seconds")
+    logger.info(f"Training data shape: {train_df_orig.shape}, Test data shape: {test_df_orig.shape}")
+
+    # Record data metrics
+    record_metric("data_load_time", data_load_time, "performance")
+    record_metric("train_rows", train_df_orig.shape[0], "data_stats")
+    record_metric("train_columns", train_df_orig.shape[1], "data_stats")
+    record_metric("test_rows", test_df_orig.shape[0], "data_stats")
+    record_metric("test_columns", test_df_orig.shape[1], "data_stats")
 
     prob_cols_all = [col for col in combined_df.columns if 'success_prob_' in col]
     rapid_prob_cols_all = sorted([col for col in prob_cols_all if 'rapid' in col], key=lambda x: int(x.split('_')[-1]))
@@ -719,11 +836,28 @@ if __name__ == '__main__':
     # Load LightGBM parameters from configuration
     lgb_params = config['lgbm_params'].copy()
 
+    # Record training start time
+    lgbm_training_start = time.time()
+    logger.info(f"Starting LightGBM KFold training with {N_SPLITS_LGBM} folds")
+
+    # Create a progress tracker for the folds
+    progress_config = config.get('progress_tracking', {})
+    enable_progress_tracking = progress_config.get('enabled', True)
+    log_interval = progress_config.get('log_interval', 10)
+
+    # Use track_progress to wrap the KFold iterator
+    kfold_splits = list(kf.split(X_train, y_train))
     for fold, (train_idx, val_idx) in enumerate(
-            tqdm(kf.split(X_train, y_train), total=N_SPLITS_LGBM, desc="LGBM KFold Training")):
+            tqdm(kfold_splits, total=N_SPLITS_LGBM, desc="LGBM KFold Training")):
+
+        fold_start_time = time.time()
+        logger.info(f"Training fold {fold + 1}/{N_SPLITS_LGBM}")
+
         lgb_params['seed'] = RANDOM_STATE + fold
         X_tr_fold, X_val_fold = X_train.iloc[train_idx], X_train.iloc[val_idx]
         y_tr_fold, y_val_fold = y_train.iloc[train_idx], y_train.iloc[val_idx]
+
+        logger.info(f"Fold {fold + 1} train shape: {X_tr_fold.shape}, validation shape: {X_val_fold.shape}")
 
         model = lgb.LGBMRegressor(**lgb_params)
         model.fit(
@@ -736,16 +870,33 @@ if __name__ == '__main__':
         model_fold_path = os.path.join(LGBM_MODEL_SAVE_DIR,
                                        f"lgbm_fold_{fold + 1}_best_iter_{model.best_iteration_}.txt")
         model.booster_.save_model(model_fold_path)
-        tqdm.write(f"Fold {fold + 1} LGBM model saved: {model_fold_path} (Best iter: {model.best_iteration_})")
+        logger.info(f"Fold {fold + 1} LGBM model saved: {model_fold_path} (Best iter: {model.best_iteration_})")
 
+        # Make predictions
         oof_preds[val_idx] = model.predict(X_val_fold, num_iteration=model.best_iteration_)
         test_preds_lgbm += model.predict(X_test, num_iteration=model.best_iteration_) / N_SPLITS_LGBM
 
+        # Calculate fold metrics
+        fold_rmse = np.sqrt(mean_squared_error(y_val_fold, oof_preds[val_idx]))
+        fold_time = time.time() - fold_start_time
+
+        # Record fold metrics
+        logger.info(f"Fold {fold + 1} completed in {fold_time:.2f} seconds. RMSE: {fold_rmse:.4f}")
+        record_metric(f"fold_{fold + 1}_rmse", fold_rmse, "fold_performance")
+        record_metric(f"fold_{fold + 1}_time", fold_time, "performance")
+        record_metric(f"fold_{fold + 1}_best_iteration", model.best_iteration_, "model_stats")
+
+    # Record total training time
+    lgbm_training_time = time.time() - lgbm_training_start
+    logger.info(f"LightGBM KFold training completed in {lgbm_training_time:.2f} seconds")
+    record_metric("lgbm_training_time", lgbm_training_time, "performance")
+
     oof_rmse = np.sqrt(mean_squared_error(y_train, oof_preds))
-    print(f"\nOverall OOF RMSE (LGBM with PyTorch AE, no engine): {oof_rmse:.4f}")
+    logger.info(f"Overall OOF RMSE (LGBM with PyTorch AE, no engine): {oof_rmse:.4f}")
+    record_metric("oof_rmse", oof_rmse, "model_performance")
 
     # Train a model on the explicit train/validation split for validation metrics
-    print("\nTraining model on explicit validation split for final metrics...")
+    logger.info("Training model on explicit validation split for final metrics...")
     val_model = lgb.LGBMRegressor(**lgb_params)
     val_model.fit(
         X_train_final, y_train_final,
@@ -756,24 +907,44 @@ if __name__ == '__main__':
 
     val_preds = val_model.predict(X_val_final, num_iteration=val_model.best_iteration_)
     val_rmse = np.sqrt(mean_squared_error(y_val_final, val_preds))
-    print(f"Validation RMSE on explicit 80/20 split: {val_rmse:.4f}")
+    logger.info(f"Validation RMSE on explicit 80/20 split: {val_rmse:.4f}")
+    record_metric("validation_rmse", val_rmse, "model_performance")
 
     # Additional detailed validation metrics
     val_mae = mean_absolute_error(y_val_final, val_preds)
     val_r2 = r2_score(y_val_final, val_preds)
-    print(f"Validation MAE: {val_mae:.4f}")
-    print(f"Validation R² Score: {val_r2:.4f}")
+    logger.info(f"Validation MAE: {val_mae:.4f}")
+    logger.info(f"Validation R² Score: {val_r2:.4f}")
+
+    # Record validation metrics
+    record_metric("validation_mae", val_mae, "model_performance")
+    record_metric("validation_r2", val_r2, "model_performance")
 
     # Calculate RMSE by rating range
-    print("\nRMSE by rating range:")
+    logger.info("RMSE by rating range:")
     rating_ranges = [(0, 1000), (1000, 1500), (1500, 2000), (2000, 2500), (2500, 3000), (3000, float('inf'))]
+    range_results = []
+
     for low, high in rating_ranges:
         mask = (y_val_final >= low) & (y_val_final < high)
         if np.sum(mask) > 0:
             range_rmse = np.sqrt(mean_squared_error(y_val_final[mask], val_preds[mask]))
-            print(f"  {low}-{high}: {range_rmse:.4f} (n={np.sum(mask)})")
+            range_count = np.sum(mask)
+            range_name = f"{low}-{high if high != float('inf') else 'inf'}"
 
-    print("Generating submission file...")
+            logger.info(f"  {range_name}: {range_rmse:.4f} (n={range_count})")
+
+            # Record metrics for each range
+            record_metric(f"rmse_{range_name}", range_rmse, "range_performance")
+            record_metric(f"count_{range_name}", range_count, "range_performance")
+
+            range_results.append({
+                'range': range_name,
+                'rmse': range_rmse,
+                'count': range_count
+            })
+
+    logger.info("Generating submission file...")
     final_predictions = np.round(test_preds_lgbm).astype(int)
     submission_df = pd.DataFrame({'PuzzleId': test_puzzle_ids, 'Rating': final_predictions})
     submission_file_path = SUBMISSION_FILE
@@ -785,5 +956,30 @@ if __name__ == '__main__':
         for pred_rating in submission_df['Rating']:
             f.write(f"{pred_rating}\n")
 
-    print(f"Submission file '{submission_file_path}' created.")
-    print("First 5 predictions:\n", submission_df.head())
+    logger.info(f"Submission file '{submission_file_path}' created.")
+    logger.info(f"First 5 predictions:\n{submission_df.head().to_string()}")
+
+    # Calculate total execution time
+    total_execution_time = time.time() - overall_start_time
+    logger.info(f"Total execution time: {total_execution_time:.2f} seconds ({total_execution_time/60:.2f} minutes)")
+
+    # Record final metrics
+    record_metric("total_execution_time", total_execution_time, "performance")
+    record_metric("final_oof_rmse", oof_rmse, "model_performance")
+    record_metric("final_validation_rmse", val_rmse, "model_performance")
+    record_metric("final_validation_mae", val_mae, "model_performance")
+    record_metric("final_validation_r2", val_r2, "model_performance")
+
+    # Generate performance dashboard
+    dashboard_config = config.get('dashboards', {})
+    if dashboard_config.get('enabled', True):
+        try:
+            logger.info("Generating performance dashboard...")
+            output_dir = dashboard_config.get('output_dir', 'dashboards')
+            dashboard_name = f"training_dashboard_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            dashboard_path = create_performance_dashboard(output_dir=output_dir, dashboard_name=dashboard_name)
+            logger.info(f"Performance dashboard created at: {dashboard_path}")
+        except Exception as e:
+            logger.error(f"Error creating performance dashboard: {str(e)}")
+
+    logger.info("Training completed successfully.")
