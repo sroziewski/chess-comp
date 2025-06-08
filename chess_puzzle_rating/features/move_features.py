@@ -7,6 +7,9 @@ import pandas as pd
 import numpy as np
 from tqdm import tqdm
 from collections import defaultdict
+import concurrent.futures
+import os
+from ..utils.config import get_config
 
 
 def extract_opening_move_features(df, moves_column='Moves'):
@@ -305,9 +308,70 @@ def analyze_move_sequence(df, fen_column='FEN', moves_column='Moves'):
         DataFrame with extracted move sequence analysis features
     """
     print("Analyzing move sequences for forcing factors, sacrifices, and complexity...")
-    features = []
 
-    for idx, row in tqdm(df.iterrows(), total=len(df)):
+    # Get configuration for parallelization
+    config = get_config()
+    performance_config = config.get('performance', {})
+    parallel_config = performance_config.get('parallel', {})
+
+    # Determine the number of worker processes to use
+    n_workers = parallel_config.get('n_workers')
+    if n_workers is None:
+        n_workers = os.cpu_count() or 1
+
+    print(f"Using {n_workers} worker processes for parallel move sequence analysis")
+
+    # Split the dataframe into chunks for parallel processing
+    chunk_size = max(1, len(df) // n_workers)
+    chunks = []
+
+    for i in range(0, len(df), chunk_size):
+        end = min(i + chunk_size, len(df))
+        chunks.append((df.iloc[i:end], fen_column, moves_column))
+
+    # Process chunks in parallel
+    results = []
+    with concurrent.futures.ProcessPoolExecutor(max_workers=n_workers) as executor:
+        # Submit all tasks and collect futures
+        futures = [executor.submit(process_move_sequence_chunk, chunk) for chunk in chunks]
+
+        # Process results as they complete
+        for future in tqdm(concurrent.futures.as_completed(futures), total=len(futures), desc="Processing chunks"):
+            try:
+                chunk_result = future.result()
+                results.append(chunk_result)
+            except Exception as e:
+                print(f"Error processing chunk: {e}")
+
+    # Combine results from all chunks
+    if results:
+        combined_df = pd.concat(results)
+        print(f"Extracted {combined_df.shape[1]} features from move sequence analysis")
+        return combined_df
+    else:
+        # Return empty DataFrame with expected columns if no results
+        return pd.DataFrame()
+
+
+def process_move_sequence_chunk(chunk_data):
+    """
+    Process a chunk of the dataframe to analyze move sequences.
+    This function is designed to be run in parallel.
+
+    Parameters
+    ----------
+    chunk_data : tuple
+        Tuple containing (chunk_df, fen_column, moves_column)
+
+    Returns
+    -------
+    pandas.DataFrame
+        DataFrame with extracted move sequence analysis features for the chunk
+    """
+    chunk_df, fen_column, moves_column = chunk_data
+    chunk_features = []
+
+    for idx, row in chunk_df.iterrows():
         feature_dict = {'idx': idx}
 
         try:
@@ -316,7 +380,7 @@ def analyze_move_sequence(df, fen_column='FEN', moves_column='Moves'):
             moves_str = row[moves_column] if moves_column in row and not pd.isna(row[moves_column]) else None
 
             if fen is None or moves_str is None or not moves_str:
-                features.append(feature_dict)
+                chunk_features.append(feature_dict)
                 continue
 
             # Initialize board from FEN
@@ -447,13 +511,16 @@ def analyze_move_sequence(df, fen_column='FEN', moves_column='Moves'):
         except Exception as e:
             print(f"Error analyzing move sequence for index {idx}: {e}")
 
-        features.append(feature_dict)
+        chunk_features.append(feature_dict)
 
     # Create DataFrame from features
-    move_analysis_df = pd.DataFrame(features).set_index('idx')
+    if chunk_features:
+        chunk_df = pd.DataFrame(chunk_features)
+        if 'idx' in chunk_df.columns:
+            chunk_df = chunk_df.set_index('idx')
 
-    # Fill NaN values
-    move_analysis_df = move_analysis_df.fillna(0)
-
-    print(f"Extracted {move_analysis_df.shape[1]} features from move sequence analysis")
-    return move_analysis_df
+        # Fill NaN values
+        chunk_df = chunk_df.fillna(0)
+        return chunk_df
+    else:
+        return pd.DataFrame()

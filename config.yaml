@@ -92,7 +92,7 @@ performance:
   # Parallel processing settings
   parallel:
     # Number of worker processes for feature extraction (null = use all available cores)
-    n_workers: 2
+    n_workers: null
     # Maximum number of threads per worker
     max_threads_per_worker: 22
 
