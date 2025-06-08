@@ -101,7 +101,7 @@ performance:
     # Enable caching for expensive computations
     enabled: true
     # Directory to store cache files
-    cache_dir: "~/.chess_puzzle_rating_cache"
+    cache_dir: "/raid/sroziewski/chess/.chess_puzzle_rating_cache"
     # Maximum cache size in GB
     max_cache_size_gb: 10
     # Cache lifetime in days (0 = never expire)
