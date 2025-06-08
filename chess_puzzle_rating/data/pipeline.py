@@ -245,9 +245,14 @@ class ChessPuzzleDataPipeline:
         validation_config = self.config['pipeline']['validation']
 
         # Check required columns
-        required_cols = validation_config['required_columns']
+        required_cols = validation_config['required_columns'].copy()
+
+        # For training data, ensure Rating is in required columns
         if is_train and 'Rating' not in required_cols:
             required_cols.append('Rating')
+        # For test data, remove Rating from required columns
+        elif not is_train and 'Rating' in required_cols:
+            required_cols.remove('Rating')
 
         missing_cols = [col for col in required_cols if col not in data.columns]
         if missing_cols:
