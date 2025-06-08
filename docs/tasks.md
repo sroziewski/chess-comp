@@ -61,17 +61,17 @@ This document contains a prioritized checklist of actionable improvement tasks f
    - [x] Create hierarchical classification (family → variation)
    - [x] Strengthen integration with ECO codes
 
-[ ] Add endgame-specific features
-   - [ ] Implement endgame pattern recognition
-   - [ ] Add tablebase distance-to-mate features for simple endgames
-   - [ ] Create features for common endgame motifs
+[x] Add endgame-specific features
+   - [x] Implement endgame pattern recognition
+   - [x] Add tablebase distance-to-mate features for simple endgames
+   - [x] Create features for common endgame motifs
 
 ## 4. Model Architecture Improvements
 
-[ ] Enhance autoencoder architecture
-   - [ ] Implement variational autoencoder (VAE) for success probability features
-   - [ ] Add attention mechanisms to focus on relevant features
-   - [ ] Implement contrastive learning for better embeddings
+[x] Enhance autoencoder architecture
+   - [x] Implement variational autoencoder (VAE) for success probability features
+   - [x] Add attention mechanisms to focus on relevant features
+   - [x] Implement contrastive learning for better embeddings
 
 [ ] Implement model stacking
    - [ ] Create a diverse set of base models (LightGBM, XGBoost, Neural Networks)

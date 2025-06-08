@@ -10,6 +10,7 @@ from chess_puzzle_rating.features.position_features import extract_fen_features
 from chess_puzzle_rating.features.move_features import extract_opening_move_features, infer_eco_codes, analyze_move_sequence
 from chess_puzzle_rating.features.opening_tags import predict_missing_opening_tags
 from chess_puzzle_rating.features.opening_features import engineer_chess_opening_features
+from chess_puzzle_rating.features.endgame_features import extract_endgame_features
 
 
 def complete_feature_engineering(df, tag_column='OpeningTags'):
@@ -31,11 +32,12 @@ def complete_feature_engineering(df, tag_column='OpeningTags'):
         - model: Trained model for predicting opening tags
         - predictions_df: DataFrame with predicted opening tags and confidence scores
     """
-    # Step 1: Extract position and move features
+    # Step 1: Extract position, move, and endgame features
     position_features = extract_fen_features(df)
     move_features = extract_opening_move_features(df)
     eco_features = infer_eco_codes(df)
     move_analysis_features = analyze_move_sequence(df)
+    endgame_features = extract_endgame_features(df)
 
     # Step 2: Predict missing opening tags
     predictions, model, combined_features = predict_missing_opening_tags(df, tag_column)
@@ -85,7 +87,8 @@ def complete_feature_engineering(df, tag_column='OpeningTags'):
         position_features,
         move_features,
         eco_features,
-        move_analysis_features
+        move_analysis_features,
+        endgame_features
     ], axis=1)
 
     # Fill any remaining NaN values

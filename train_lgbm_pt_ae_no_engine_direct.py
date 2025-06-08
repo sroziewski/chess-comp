@@ -82,38 +82,122 @@ EMBEDDING_DIM_PROB = 16
 class ProbAutoencoder(nn.Module):
     def __init__(self, input_seq_len=PROB_SEQ_LENGTH, embedding_dim=EMBEDDING_DIM_PROB):
         super(ProbAutoencoder, self).__init__()
+        # Encoder layers
         self.encoder_conv1 = nn.Conv1d(1, 32, 3, padding=1)
         self.encoder_bn1 = nn.BatchNorm1d(32)
         self.encoder_conv2 = nn.Conv1d(32, 64, 3, padding=1)
         self.encoder_bn2 = nn.BatchNorm1d(64)
         self.encoder_conv3 = nn.Conv1d(64, 64, 3, padding=1)
         self.encoder_bn3 = nn.BatchNorm1d(64)
+
+        # Self-attention mechanism
+        self.attention = nn.MultiheadAttention(64, num_heads=4, batch_first=True)
+
         self.encoder_pool = nn.AdaptiveMaxPool1d(1)
-        self.encoder_fc = nn.Linear(64, embedding_dim)
+
+        # VAE: separate layers for mean and log variance
+        self.encoder_fc_mu = nn.Linear(64, embedding_dim)
+        self.encoder_fc_logvar = nn.Linear(64, embedding_dim)
+
+        # Decoder layers
         self.decoder_fc_expand = nn.Linear(embedding_dim, 128)
         self.decoder_relu = nn.ReLU()
         self.decoder_fc_mid = nn.Linear(128, 64)
         self.decoder_fc_final = nn.Linear(64, input_seq_len)
+
+        # Store embedding dimension for KL divergence calculation
+        self.embedding_dim = embedding_dim
+
+    def reparameterize(self, mu, logvar):
+        """
+        Reparameterization trick to sample from N(mu, var) from N(0,1).
+        """
+        std = torch.exp(0.5 * logvar)
+        eps = torch.randn_like(std)
+        return mu + eps * std
 
     def encode(self, x):
         x = x.unsqueeze(1)
         x = F.relu(self.encoder_bn1(self.encoder_conv1(x)))
         x = F.relu(self.encoder_bn2(self.encoder_conv2(x)))
         x = F.relu(self.encoder_bn3(self.encoder_conv3(x)))
+
+        # Apply attention mechanism
+        # Reshape for attention: [batch, channels, seq_len] -> [batch, seq_len, channels]
+        x_reshaped = x.permute(0, 2, 1)
+        x_attn, _ = self.attention(x_reshaped, x_reshaped, x_reshaped)
+        # Reshape back: [batch, seq_len, channels] -> [batch, channels, seq_len]
+        x = x_attn.permute(0, 2, 1)
+
         x = self.encoder_pool(x)
         x = x.view(x.size(0), -1)
-        return self.encoder_fc(x)
 
-    def decode(self, e):
-        x = self.decoder_relu(self.decoder_fc_expand(e))
+        # Return mean and log variance
+        mu = self.encoder_fc_mu(x)
+        logvar = self.encoder_fc_logvar(x)
+
+        return mu, logvar
+
+    def decode(self, z):
+        x = self.decoder_relu(self.decoder_fc_expand(z))
         x = self.decoder_relu(self.decoder_fc_mid(x))
         return torch.sigmoid(self.decoder_fc_final(x))
 
     def forward(self, x):
-        e = self.encode(x)
-        r = self.decode(e)
-        return r, e
+        mu, logvar = self.encode(x)
+        z = self.reparameterize(mu, logvar)
+        recon_x = self.decode(z)
 
+        # Store KL divergence for loss calculation
+        # KL divergence between N(mu, var) and N(0, 1)
+        kl_div = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp(), dim=1)
+
+        return recon_x, z, mu, logvar, kl_div
+
+
+# --- Contrastive Loss Function ---
+def contrastive_loss(embeddings, temperature=0.5):
+    """
+    Implements contrastive loss (InfoNCE) for better embeddings
+
+    Args:
+        embeddings: Batch of embeddings [batch_size, embedding_dim]
+        temperature: Temperature parameter for scaling
+
+    Returns:
+        Contrastive loss value
+    """
+    batch_size = embeddings.size(0)
+    if batch_size <= 1:
+        return torch.tensor(0.0, device=embeddings.device)  # Can't compute contrastive loss with single sample
+
+    # Normalize embeddings for cosine similarity
+    embeddings_norm = F.normalize(embeddings, p=2, dim=1)
+
+    # Compute similarity matrix
+    similarity_matrix = torch.matmul(embeddings_norm, embeddings_norm.T) / temperature
+
+    # Mask out self-similarity
+    mask = torch.eye(batch_size, device=similarity_matrix.device)
+    mask = 1 - mask  # Invert to keep non-diagonal elements
+
+    # For numerical stability, subtract max from each row
+    similarity_matrix = similarity_matrix * mask
+    similarity_matrix = similarity_matrix - torch.max(similarity_matrix, dim=1, keepdim=True)[0].detach()
+
+    # Compute positive and negative pairs
+    exp_sim = torch.exp(similarity_matrix) * mask
+
+    # Sum over all negatives
+    sum_exp_sim = exp_sim.sum(dim=1, keepdim=True)
+
+    # Compute log-softmax
+    log_prob = -torch.log(exp_sim / (sum_exp_sim + 1e-8) + 1e-8)
+
+    # Average over all positive pairs
+    loss = log_prob.sum() / (batch_size * (batch_size - 1))
+
+    return loss
 
 # --- PyTorch Autoencoder Training Function ---
 def train_autoencoder(auto_model_base, train_loader, val_loader, epochs, lr, patience, model_save_path,
@@ -123,7 +207,14 @@ def train_autoencoder(auto_model_base, train_loader, val_loader, epochs, lr, pat
         auto_model_train = nn.DataParallel(auto_model_base, device_ids=DEVICE_IDS)
     else:
         auto_model_train = auto_model_base
-    criterion = nn.MSELoss()
+
+    # Reconstruction loss
+    recon_criterion = nn.MSELoss(reduction='sum')
+
+    # Loss weights
+    kl_weight = 0.001  # Weight for KL divergence loss
+    contrastive_weight = 0.1  # Weight for contrastive loss
+
     optimizer = optim.Adam(auto_model_train.parameters(), lr=lr)
     best_val_loss = float('inf')
     epochs_no_improve = 0
@@ -134,33 +225,99 @@ def train_autoencoder(auto_model_base, train_loader, val_loader, epochs, lr, pat
     for epoch in range(epochs):
         auto_model_train.train()
         train_loss = 0.0
+        train_recon_loss = 0.0
+        train_kl_loss = 0.0
+        train_contrastive_loss = 0.0
+
         progress_bar_train = tqdm(train_loader, desc=f"Epoch {epoch + 1}/{epochs} [T]", leave=False, unit="batch")
 
         for data_batch in progress_bar_train:
             inputs = data_batch[0].to(DEVICE)
             optimizer.zero_grad()
-            reconstructions, _ = auto_model_train(inputs)
-            loss = criterion(reconstructions, inputs)
+
+            # Forward pass with VAE
+            recon_x, z, mu, logvar, kl_div = auto_model_train(inputs)
+
+            # Reconstruction loss
+            recon_loss = recon_criterion(recon_x, inputs) / inputs.size(0)
+
+            # KL divergence loss
+            kl_loss = kl_div.mean()
+
+            # Contrastive loss
+            contr_loss = contrastive_loss(z)
+
+            # Total loss
+            loss = recon_loss + kl_weight * kl_loss + contrastive_weight * contr_loss
+
             loss.backward()
             optimizer.step()
+
+            # Track losses
             train_loss += loss.item() * inputs.size(0)
-            progress_bar_train.set_postfix({'train_loss': f'{loss.item():.4f}'})
+            train_recon_loss += recon_loss.item() * inputs.size(0)
+            train_kl_loss += kl_loss.item() * inputs.size(0)
+            train_contrastive_loss += contr_loss.item() * inputs.size(0)
+
+            progress_bar_train.set_postfix({
+                'loss': f'{loss.item():.4f}',
+                'recon': f'{recon_loss.item():.4f}',
+                'kl': f'{kl_loss.item():.4f}',
+                'contr': f'{contr_loss.item():.4f}'
+            })
 
         train_loss /= len(train_loader.dataset)
+        train_recon_loss /= len(train_loader.dataset)
+        train_kl_loss /= len(train_loader.dataset)
+        train_contrastive_loss /= len(train_loader.dataset)
+
         auto_model_train.eval()
         val_loss = 0.0
+        val_recon_loss = 0.0
+        val_kl_loss = 0.0
+        val_contrastive_loss = 0.0
+
         progress_bar_val = tqdm(val_loader, desc=f"Epoch {epoch + 1}/{epochs} [V]", leave=False, unit="batch")
 
         with torch.no_grad():
             for data_batch in progress_bar_val:
                 inputs = data_batch[0].to(DEVICE)
-                reconstructions, _ = auto_model_train(inputs)
-                loss = criterion(reconstructions, inputs)
+
+                # Forward pass with VAE
+                recon_x, z, mu, logvar, kl_div = auto_model_train(inputs)
+
+                # Reconstruction loss
+                recon_loss = recon_criterion(recon_x, inputs) / inputs.size(0)
+
+                # KL divergence loss
+                kl_loss = kl_div.mean()
+
+                # Contrastive loss
+                contr_loss = contrastive_loss(z)
+
+                # Total loss
+                loss = recon_loss + kl_weight * kl_loss + contrastive_weight * contr_loss
+
+                # Track losses
                 val_loss += loss.item() * inputs.size(0)
-                progress_bar_val.set_postfix({'val_loss': f'{loss.item():.4f}'})
+                val_recon_loss += recon_loss.item() * inputs.size(0)
+                val_kl_loss += kl_loss.item() * inputs.size(0)
+                val_contrastive_loss += contr_loss.item() * inputs.size(0)
+
+                progress_bar_val.set_postfix({
+                    'val_loss': f'{loss.item():.4f}'
+                })
 
         val_loss /= len(val_loader.dataset)
-        tqdm.write(f"Epoch {epoch + 1}/{epochs} - Train Loss: {train_loss:.6f}, Val Loss: {val_loss:.6f}")
+        val_recon_loss /= len(val_loader.dataset)
+        val_kl_loss /= len(val_loader.dataset)
+        val_contrastive_loss /= len(val_loader.dataset)
+
+        tqdm.write(
+            f"Epoch {epoch + 1}/{epochs} - "
+            f"Train Loss: {train_loss:.6f} (Recon: {train_recon_loss:.6f}, KL: {train_kl_loss:.6f}, Contr: {train_contrastive_loss:.6f}), "
+            f"Val Loss: {val_loss:.6f} (Recon: {val_recon_loss:.6f}, KL: {val_kl_loss:.6f}, Contr: {val_contrastive_loss:.6f})"
+        )
 
         if val_loss < best_val_loss:
             best_val_loss = val_loss
@@ -310,8 +467,9 @@ def extract_embeddings_from_autoencoder(autoencoder_model, sequences_np, current
         return np.array([])
 
     if sequences_np.shape[0] == 0:
-        out_dim = autoencoder_model.module.encoder_fc.out_features if isinstance(autoencoder_model,
-                                                                                 nn.DataParallel) else autoencoder_model.encoder_fc.out_features
+        # For VAE, we use encoder_fc_mu instead of encoder_fc
+        out_dim = autoencoder_model.module.encoder_fc_mu.out_features if isinstance(autoencoder_model,
+                                                                                 nn.DataParallel) else autoencoder_model.encoder_fc_mu.out_features
         return np.array([]).reshape(0, out_dim)
 
     model_for_inference = autoencoder_model  # This should be the base model on DEVICE
@@ -332,11 +490,17 @@ def extract_embeddings_from_autoencoder(autoencoder_model, sequences_np, current
     with torch.no_grad():
         for batch_data_tuple in tqdm(loader, desc="Extracting Embeddings", leave=False, unit="batch"):
             inputs = batch_data_tuple[0].to(current_device)
-            _, embeddings = model_for_inference(inputs)
+            # VAE returns (recon_x, z, mu, logvar, kl_div)
+            # We use z (the sampled latent vector) as our embedding
+            outputs = model_for_inference(inputs)
+
+            # Extract the latent representation (z) which is the second element in the output tuple
+            embeddings = outputs[1]  # z is at index 1
             all_embeddings_list.append(embeddings.cpu().numpy())
 
     if not all_embeddings_list:
-        out_dim = autoencoder_model.encoder_fc.out_features  # Access from base model
+        # For VAE, we use encoder_fc_mu instead of encoder_fc
+        out_dim = autoencoder_model.encoder_fc_mu.out_features  # Access from base model
         return np.array([]).reshape(0, out_dim)
 
     return np.concatenate(all_embeddings_list, axis=0)
