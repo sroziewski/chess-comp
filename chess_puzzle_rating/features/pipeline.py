@@ -216,7 +216,13 @@ def complete_feature_engineering(df, tag_column='OpeningTags', n_workers=None, c
     # Step 2: Predict missing opening tags
     logger.info("Step 2: Predicting missing opening tags")
     tag_prediction_start = time.time()
-    predictions, model, combined_features = predict_missing_opening_tags(df, tag_column)
+    predictions, model, combined_features = predict_missing_opening_tags(
+        df, 
+        tag_column=tag_column,
+        fen_features=position_features,
+        move_features=move_features,
+        eco_features=eco_features
+    )
     tag_prediction_time = time.time() - tag_prediction_start
     logger.info(f"Opening tag prediction completed in {tag_prediction_time:.2f} seconds")
     record_metric("tag_prediction_time", tag_prediction_time, "performance")

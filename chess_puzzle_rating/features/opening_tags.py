@@ -142,7 +142,7 @@ def create_eco_mapping(df, tag_column='OpeningTags'):
     return {'family': eco_to_family, 'variation': eco_to_variation}
 
 
-def predict_hierarchical_opening_tags(df, tag_column='OpeningTags'):
+def predict_hierarchical_opening_tags(df, tag_column='OpeningTags', fen_features=None, move_features=None, eco_features=None):
     """
     Predict opening tags using a hierarchical approach (family → variation)
     with strengthened ECO code integration.
@@ -153,6 +153,12 @@ def predict_hierarchical_opening_tags(df, tag_column='OpeningTags'):
         DataFrame containing chess puzzles
     tag_column : str, optional
         Name of the column containing opening tags, by default 'OpeningTags'
+    fen_features : pandas.DataFrame, optional
+        Pre-computed position features from FEN strings, by default None
+    move_features : pandas.DataFrame, optional
+        Pre-computed move features, by default None
+    eco_features : pandas.DataFrame, optional
+        Pre-computed ECO code features, by default None
 
     Returns
     -------
@@ -164,10 +170,13 @@ def predict_hierarchical_opening_tags(df, tag_column='OpeningTags'):
     """
     print("Predicting opening tags using hierarchical classification with ECO code integration...")
 
-    # Extract features
-    fen_features = extract_fen_features(df)
-    move_features = extract_opening_move_features(df)
-    eco_features = infer_eco_codes(df)
+    # Extract features if not provided
+    if fen_features is None:
+        fen_features = extract_fen_features(df)
+    if move_features is None:
+        move_features = extract_opening_move_features(df)
+    if eco_features is None:
+        eco_features = infer_eco_codes(df)
 
     # Create ECO code mapping
     eco_mapping = create_eco_mapping(df, tag_column)
@@ -363,7 +372,7 @@ def predict_hierarchical_opening_tags(df, tag_column='OpeningTags'):
     return results_df, models_dict, combined_features
 
 
-def predict_missing_opening_tags(df, tag_column='OpeningTags'):
+def predict_missing_opening_tags(df, tag_column='OpeningTags', fen_features=None, move_features=None, eco_features=None):
     """
     Predict missing opening tags using an ensemble approach with hierarchical classification.
 
@@ -373,6 +382,12 @@ def predict_missing_opening_tags(df, tag_column='OpeningTags'):
         DataFrame containing chess puzzles
     tag_column : str, optional
         Name of the column containing opening tags, by default 'OpeningTags'
+    fen_features : pandas.DataFrame, optional
+        Pre-computed position features from FEN strings, by default None
+    move_features : pandas.DataFrame, optional
+        Pre-computed move features, by default None
+    eco_features : pandas.DataFrame, optional
+        Pre-computed ECO code features, by default None
 
     Returns
     -------
@@ -384,17 +399,26 @@ def predict_missing_opening_tags(df, tag_column='OpeningTags'):
     """
     print("Predicting missing opening tags using ensemble approach with hierarchical classification...")
 
-    # Extract features
-    fen_features = extract_fen_features(df)
-    move_features = extract_opening_move_features(df)
-    eco_features = infer_eco_codes(df)
+    # Extract features if not provided
+    if fen_features is None:
+        fen_features = extract_fen_features(df)
+    if move_features is None:
+        move_features = extract_opening_move_features(df)
+    if eco_features is None:
+        eco_features = infer_eco_codes(df)
 
     # Combine all features
     combined_features = pd.concat([fen_features, move_features, eco_features], axis=1)
     combined_features = combined_features.fillna(0)  # Fill any NaN values
 
     # Use hierarchical prediction
-    hierarchical_results, models_dict, _ = predict_hierarchical_opening_tags(df, tag_column)
+    hierarchical_results, models_dict, _ = predict_hierarchical_opening_tags(
+        df, 
+        tag_column=tag_column,
+        fen_features=fen_features,
+        move_features=move_features,
+        eco_features=eco_features
+    )
 
     # Identify puzzles without tags
     has_tags = ~df[tag_column].isna() & (df[tag_column] != '')
