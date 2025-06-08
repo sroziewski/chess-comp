@@ -798,6 +798,38 @@ def extract_features_from_board(idx_board_fen):
         return feature_dict
 
 
+def process_fen_directly(idx_fen):
+    """
+    Process a single FEN string and extract features directly.
+    This function combines board creation and feature extraction to avoid
+    pickling chess.Board objects between processes.
+
+    Parameters
+    ----------
+    idx_fen : tuple
+        Tuple containing (idx, fen)
+
+    Returns
+    -------
+    dict
+        Dictionary with extracted features
+    """
+    idx, fen = idx_fen
+    feature_dict = {'idx': idx}
+
+    try:
+        # Create board from FEN
+        board = chess.Board(fen)
+
+        # Extract features directly
+        if board is not None:
+            # Call extract_features_from_board with the created board
+            return extract_features_from_board((idx, board, fen))
+        return feature_dict
+    except Exception as e:
+        print(f"Error processing FEN {fen}: {e}")
+        return feature_dict
+
 def extract_fen_features(df, fen_column='FEN'):
     """
     Extract rich positional features from FEN strings.
@@ -822,30 +854,27 @@ def extract_fen_features(df, fen_column='FEN'):
     performance_config = config.get('performance', {})
     parallel_config = performance_config.get('parallel', {})
 
-    # Determine the number of threads to use for internal parallelization
+    # Determine the number of processes to use for internal parallelization
     # Use all available CPU cores for maximum parallelization
-    n_threads = os.cpu_count() or 4  # Default to 4 if os.cpu_count() returns None
+    n_processes = os.cpu_count() or 4  # Default to 4 if os.cpu_count() returns None
 
     # Prepare the list of (idx, fen) tuples
     idx_fen_tuples = list(df[fen_column].items())
 
-    # Process FEN strings in parallel using ThreadPoolExecutor to create board objects
-    print(f"Using {n_threads} threads for parallel FEN processing")
-    boards = {}
-    with concurrent.futures.ThreadPoolExecutor(max_workers=n_threads) as executor:
-        # Process results as they complete
-        for idx, board in tqdm(executor.map(process_single_fen, idx_fen_tuples), total=len(idx_fen_tuples), desc="Creating board objects"):
-            boards[idx] = board
+    # Process FEN strings in parallel using ProcessPoolExecutor
+    # This combines board creation and feature extraction in a single step
+    # to avoid pickling chess.Board objects between processes
+    print(f"Using {n_processes} processes for parallel FEN processing")
 
-    # Prepare input for parallel feature extraction
-    idx_board_fen_tuples = [(idx, boards[idx], fen) for idx, fen in idx_fen_tuples]
+    # Use a smaller chunk size for better load balancing
+    chunk_size = max(1, len(idx_fen_tuples) // (n_processes * 4))
 
-    # Process feature extraction in parallel
+    # Process feature extraction in parallel using ProcessPoolExecutor
     features = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=n_threads) as executor:
+    with concurrent.futures.ProcessPoolExecutor(max_workers=n_processes) as executor:
         # Process results as they complete
-        for feature_dict in tqdm(executor.map(extract_features_from_board, idx_board_fen_tuples), 
-                                total=len(idx_board_fen_tuples), desc="Extracting features"):
+        for feature_dict in tqdm(executor.map(process_fen_directly, idx_fen_tuples, chunksize=chunk_size), 
+                                total=len(idx_fen_tuples), desc="Extracting features from FEN"):
             features.append(feature_dict)
 
     # Create DataFrame from features
