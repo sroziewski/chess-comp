@@ -10,6 +10,7 @@ from collections import defaultdict
 import concurrent.futures
 import os
 from ..utils.config import get_config
+from ..utils.progress import get_logger
 
 
 def extract_opening_move_features(df, moves_column='Moves'):
@@ -28,7 +29,8 @@ def extract_opening_move_features(df, moves_column='Moves'):
     pandas.DataFrame
         DataFrame with extracted opening move features
     """
-    print("Extracting features from opening moves...")
+    logger = get_logger()
+    logger.info("Extracting features from opening moves...")
     features = []
 
     # Common first moves and their frequencies in different openings
@@ -148,7 +150,7 @@ def extract_opening_move_features(df, moves_column='Moves'):
             features.append(feature_dict)
 
         except Exception as e:
-            print(f"Error extracting move features for {moves_str}: {e}")
+            logger.error(f"Error extracting move features for {moves_str}: {e}")
             features.append({'idx': idx})
 
     # Create DataFrame from features
@@ -157,7 +159,7 @@ def extract_opening_move_features(df, moves_column='Moves'):
     # Fill NaN values
     moves_features_df = moves_features_df.fillna(0)
 
-    print(f"Extracted {moves_features_df.shape[1]} features from opening moves")
+    logger.info(f"Extracted {moves_features_df.shape[1]} features from opening moves")
     return moves_features_df
 
 
@@ -177,7 +179,8 @@ def infer_eco_codes(df, moves_column='Moves'):
     pandas.DataFrame
         DataFrame with inferred ECO code features
     """
-    print("Inferring ECO codes from moves...")
+    logger = get_logger()
+    logger.info("Inferring ECO codes from moves...")
     features = []
 
     # ECO code patterns (simplified)
@@ -273,7 +276,7 @@ def infer_eco_codes(df, moves_column='Moves'):
             features.append(feature_dict)
 
         except Exception as e:
-            print(f"Error inferring ECO for {moves_str}: {e}")
+            logger.error(f"Error inferring ECO for {moves_str}: {e}")
             features.append({'idx': idx})
 
     # Create DataFrame from features
@@ -282,7 +285,7 @@ def infer_eco_codes(df, moves_column='Moves'):
     # Fill NaN values
     eco_features_df = eco_features_df.fillna(0)
 
-    print(f"Inferred ECO codes with {eco_features_df.shape[1]} features")
+    logger.info(f"Inferred ECO codes with {eco_features_df.shape[1]} features")
     return eco_features_df
 
 
@@ -307,7 +310,8 @@ def analyze_move_sequence(df, fen_column='FEN', moves_column='Moves'):
     pandas.DataFrame
         DataFrame with extracted move sequence analysis features
     """
-    print("Analyzing move sequences for forcing factors, sacrifices, and complexity...")
+    logger = get_logger()
+    logger.info("Analyzing move sequences for forcing factors, sacrifices, and complexity...")
 
     # Get configuration for parallelization
     config = get_config()
@@ -319,7 +323,7 @@ def analyze_move_sequence(df, fen_column='FEN', moves_column='Moves'):
     if n_workers is None:
         n_workers = os.cpu_count() or 1
 
-    print(f"Using {n_workers} worker processes for parallel move sequence analysis")
+    logger.info(f"Using {n_workers} worker processes for parallel move sequence analysis")
 
     # Split the dataframe into chunks for parallel processing
     chunk_size = max(1, len(df) // n_workers)
@@ -341,12 +345,12 @@ def analyze_move_sequence(df, fen_column='FEN', moves_column='Moves'):
                 chunk_result = future.result()
                 results.append(chunk_result)
             except Exception as e:
-                print(f"Error processing chunk: {e}")
+                logger.error(f"Error processing chunk: {e}")
 
     # Combine results from all chunks
     if results:
         combined_df = pd.concat(results)
-        print(f"Extracted {combined_df.shape[1]} features from move sequence analysis")
+        logger.info(f"Extracted {combined_df.shape[1]} features from move sequence analysis")
         return combined_df
     else:
         # Return empty DataFrame with expected columns if no results
@@ -509,7 +513,7 @@ def process_move_sequence_chunk(chunk_data):
             feature_dict['pct_moves_with_threat'] = threats / max(1, len(moves))
 
         except Exception as e:
-            print(f"Error analyzing move sequence for index {idx}: {e}")
+            logger.error(f"Error analyzing move sequence for index {idx}: {e}")
 
         chunk_features.append(feature_dict)
 

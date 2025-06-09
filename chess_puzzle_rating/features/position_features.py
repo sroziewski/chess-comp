@@ -24,6 +24,7 @@ from collections import Counter, defaultdict
 import concurrent.futures
 import os
 from ..utils.config import get_config
+from ..utils.progress import get_logger
 
 
 def identify_pawn_chains(pawns):
@@ -794,7 +795,8 @@ def extract_features_from_board(idx_board_fen):
         return feature_dict
 
     except Exception as e:
-        print(f"Error extracting features for FEN {fen}: {e}")
+        logger = get_logger()
+        logger.error(f"Error extracting features for FEN {fen}: {e}")
         return feature_dict
 
 
@@ -827,7 +829,8 @@ def process_fen_directly(idx_fen):
             return extract_features_from_board((idx, board, fen))
         return feature_dict
     except Exception as e:
-        print(f"Error processing FEN {fen}: {e}")
+        logger = get_logger()
+        logger.error(f"Error processing FEN {fen}: {e}")
         return feature_dict
 
 def extract_fen_features(df, fen_column='FEN'):
@@ -847,7 +850,8 @@ def extract_fen_features(df, fen_column='FEN'):
     pandas.DataFrame
         DataFrame with extracted position features
     """
-    print("Extracting position features from FEN...")
+    logger = get_logger()
+    logger.info("Extracting position features from FEN...")
 
     # Get configuration for internal parallelization
     config = get_config()
@@ -864,7 +868,7 @@ def extract_fen_features(df, fen_column='FEN'):
     # Process FEN strings in parallel using ProcessPoolExecutor
     # This combines board creation and feature extraction in a single step
     # to avoid pickling chess.Board objects between processes
-    print(f"Using {n_processes} processes for parallel FEN processing")
+    logger.info(f"Using {n_processes} processes for parallel FEN processing")
 
     # Use a smaller chunk size for better load balancing
     chunk_size = max(1, len(idx_fen_tuples) // (n_processes * 4))
@@ -883,5 +887,5 @@ def extract_fen_features(df, fen_column='FEN'):
     # Fill NaN values
     fen_features_df = fen_features_df.fillna(0)
 
-    print(f"Extracted {fen_features_df.shape[1]} position features from FEN")
+    logger.info(f"Extracted {fen_features_df.shape[1]} position features from FEN")
     return fen_features_df

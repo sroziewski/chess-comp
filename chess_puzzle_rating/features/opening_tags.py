@@ -22,6 +22,7 @@ from sklearn.pipeline import Pipeline
 
 from chess_puzzle_rating.features.position_features import extract_fen_features
 from chess_puzzle_rating.features.move_features import extract_opening_move_features, infer_eco_codes
+from chess_puzzle_rating.utils.progress import get_logger
 
 
 def extract_primary_family(tag_str):
@@ -168,7 +169,8 @@ def predict_hierarchical_opening_tags(df, tag_column='OpeningTags', fen_features
         - models_dict: Dictionary of trained models (family model and variation models)
         - combined_features_df: DataFrame with all features used for prediction
     """
-    print("Predicting opening tags using hierarchical classification with ECO code integration...")
+    logger = get_logger()
+    logger.info("Predicting opening tags using hierarchical classification with ECO code integration...")
 
     # Extract features if not provided
     if fen_features is None:
@@ -227,7 +229,7 @@ def predict_hierarchical_opening_tags(df, tag_column='OpeningTags', fen_features
 
     # Evaluate family prediction with cross-validation
     cv_scores_family = cross_val_score(family_model, X_train, y_train_family, cv=5)
-    print(f"Family prediction accuracy: {cv_scores_family.mean():.4f} ± {cv_scores_family.std():.4f}")
+    logger.info(f"Family prediction accuracy: {cv_scores_family.mean():.4f} ± {cv_scores_family.std():.4f}")
 
     # Train family model on all data with tags
     family_model.fit(X_train, y_train_family)
@@ -397,7 +399,8 @@ def predict_missing_opening_tags(df, tag_column='OpeningTags', fen_features=None
         - model: Dictionary of trained models
         - combined_features_df: DataFrame with all features used for prediction
     """
-    print("Predicting missing opening tags using ensemble approach with hierarchical classification...")
+    logger = get_logger()
+    logger.info("Predicting missing opening tags using ensemble approach with hierarchical classification...")
 
     # Extract features if not provided
     if fen_features is None:
@@ -434,7 +437,7 @@ def predict_missing_opening_tags(df, tag_column='OpeningTags', fen_features=None
     high_conf_threshold = 0.7
     high_conf_predictions = results[results['prediction_confidence'] >= high_conf_threshold]
 
-    print(
+    logger.info(
         f"Made {len(high_conf_predictions)} high-confidence predictions out of {len(df_without_tags)} puzzles without tags")
 
     # For detailed analysis, add the hierarchical results
