@@ -10,6 +10,8 @@ from collections import Counter
 import re
 from tqdm import tqdm
 
+from chess_puzzle_rating.features.opening_tags import OPENING_TAGS
+
 
 def engineer_chess_opening_features(df, tag_column='OpeningTags',
                                    min_family_freq=50,
@@ -21,10 +23,11 @@ def engineer_chess_opening_features(df, tag_column='OpeningTags',
                                    n_svd_components_full=15,
                                    n_hash_features=20,
                                    max_tag_depth=5,
-                                   additional_columns=None):
+                                   additional_columns=None,
+                                   use_predefined_tags=True):
     """
     Comprehensive feature engineering for chess opening tags.
-    
+
     Parameters
     ----------
     df : pandas.DataFrame
@@ -51,7 +54,9 @@ def engineer_chess_opening_features(df, tag_column='OpeningTags',
         Maximum depth of tag hierarchy to consider, by default 5
     additional_columns : list, optional
         List of additional columns to use for interaction features, by default None
-        
+    use_predefined_tags : bool, optional
+        Whether to use the predefined list of opening tags from opening_tags.py, by default True
+
     Returns
     -------
     pandas.DataFrame
@@ -67,12 +72,12 @@ def engineer_chess_opening_features(df, tag_column='OpeningTags',
     def parse_opening_tag(tag_string):
         """
         Parses opening tags with enhanced chess domain knowledge.
-        
+
         Parameters
         ----------
         tag_string : str
             String containing opening tags
-            
+
         Returns
         -------
         tuple
@@ -116,12 +121,12 @@ def engineer_chess_opening_features(df, tag_column='OpeningTags',
     def standardize_opening_family(components):
         """
         Standardize opening family names based on chess theory.
-        
+
         Parameters
         ----------
         components : list
             List of components from a parsed opening tag
-            
+
         Returns
         -------
         str
@@ -158,8 +163,43 @@ def engineer_chess_opening_features(df, tag_column='OpeningTags',
     all_keywords = Counter()
     all_full_tags_for_svd = []  # For SVD on common full tags
 
+    # Create a set of predefined tags for faster lookup
+    predefined_tags_set = set(OPENING_TAGS) if use_predefined_tags else set()
+
+    # Extract families and variations from predefined tags
+    predefined_families = set()
+    predefined_variations = {}
+
+    if use_predefined_tags:
+        for tag in OPENING_TAGS:
+            parts = tag.split('_')
+            family = parts[0]
+            predefined_families.add(family)
+
+            if len(parts) > 1:
+                variation = '_'.join(parts[1:])
+                if family not in predefined_variations:
+                    predefined_variations[family] = set()
+                predefined_variations[family].add(variation)
+
     for idx, tag_string in tqdm(df_copy[tag_column].items(), desc="Parsing Tags"):
-        raw_tags, parsed_tags_list = parse_opening_tag(tag_string)
+        raw_tags = []
+        parsed_tags_list = []
+
+        # If using predefined tags, validate against the list
+        if use_predefined_tags and tag_string:
+            # Split by spaces to handle multiple tags
+            for tag in tag_string.split():
+                if tag in predefined_tags_set:
+                    raw_tags.append(tag)
+                    # Parse the tag into components
+                    components = tag.split('_')
+                    parsed_components = [comp.lower() for comp in components]
+                    parsed_tags_list.append(parsed_components)
+        else:
+            # Use the original parsing logic
+            raw_tags, parsed_tags_list = parse_opening_tag(tag_string)
+
         all_parsed_tags_info.append({'idx': idx, 'raw_tags': raw_tags, 'parsed_tags': parsed_tags_list})
 
         # For simplicity, consider the first tag in a multi-tag string as the "primary"
@@ -208,10 +248,64 @@ def engineer_chess_opening_features(df, tag_column='OpeningTags',
         all_full_tags_for_svd.append(raw_tags[0] if raw_tags else "")
 
     # --- Select Top N for One-Hot Encoding ---
-    top_families = [fam for fam, count in all_level1_families.most_common(max_components_level1)
-                   if count >= min_family_freq]
-    top_variations = [var for var, count in all_level2_variations.most_common(max_components_level2)
-                     if count >= min_variation_freq]
+    if use_predefined_tags:
+        # When using predefined tags, prioritize them in the feature selection
+        # Convert predefined families to lowercase for consistent comparison
+        predefined_families_lower = {fam.lower() for fam in predefined_families}
+
+        # For families, include all predefined families that meet the frequency threshold
+        predefined_families_with_counts = []
+        for fam_lower in predefined_families_lower:
+            if fam_lower in all_level1_families and all_level1_families[fam_lower] >= min_family_freq:
+                predefined_families_with_counts.append((fam_lower, all_level1_families[fam_lower]))
+
+        predefined_families_with_counts.sort(key=lambda x: x[1], reverse=True)
+
+        # Take top N predefined families
+        top_predefined_families = [fam for fam, _ in predefined_families_with_counts[:max_components_level1]]
+
+        # Add remaining families from frequency count if needed
+        remaining_slots = max_components_level1 - len(top_predefined_families)
+        if remaining_slots > 0:
+            # Get families not already included
+            remaining_families = [fam for fam, count in all_level1_families.most_common() 
+                                 if fam.lower() not in [f.lower() for f in top_predefined_families] 
+                                 and count >= min_family_freq]
+            top_families = top_predefined_families + remaining_families[:remaining_slots]
+        else:
+            top_families = top_predefined_families
+
+        # Similar approach for variations
+        all_predefined_variations = []
+        for family, variations in predefined_variations.items():
+            family_lower = family.lower()
+            for variation in variations:
+                variation_lower = variation.lower()
+                full_variation = f"{family_lower}_{variation_lower}"
+                # Check if this variation exists in the data
+                if full_variation in all_level2_variations and all_level2_variations[full_variation] >= min_variation_freq:
+                    all_predefined_variations.append((full_variation, all_level2_variations[full_variation]))
+
+        all_predefined_variations.sort(key=lambda x: x[1], reverse=True)
+        top_predefined_variations = [var for var, _ in all_predefined_variations[:max_components_level2]]
+
+        remaining_slots = max_components_level2 - len(top_predefined_variations)
+        if remaining_slots > 0:
+            # Get variations not already included
+            remaining_variations = [var for var, count in all_level2_variations.most_common() 
+                                   if var.lower() not in [v.lower() for v in top_predefined_variations] 
+                                   and count >= min_variation_freq]
+            top_variations = top_predefined_variations + remaining_variations[:remaining_slots]
+        else:
+            top_variations = top_predefined_variations
+    else:
+        # Original selection logic
+        top_families = [fam for fam, count in all_level1_families.most_common(max_components_level1)
+                       if count >= min_family_freq]
+        top_variations = [var for var, count in all_level2_variations.most_common(max_components_level2)
+                         if count >= min_variation_freq]
+
+    # Keywords selection remains the same
     top_keywords = [kw for kw, count in all_keywords.most_common(200)
                    if count >= min_keyword_freq and len(kw) > 2]  # Avoid short words like "of"
 
