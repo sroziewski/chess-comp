@@ -15,6 +15,7 @@ import pandas as pd
 import numpy as np
 from tqdm import tqdm
 from collections import Counter, defaultdict
+from ..utils.progress import get_logger
 
 
 def is_endgame(board):
@@ -491,7 +492,8 @@ def extract_endgame_features(df, fen_column='FEN'):
     pandas.DataFrame
         DataFrame with extracted endgame features
     """
-    print("Extracting endgame features from FEN...")
+    logger = get_logger()
+    logger.info("Extracting endgame features from FEN...")
     features = []
 
     for idx, fen in tqdm(df[fen_column].items(), total=len(df)):
@@ -545,7 +547,7 @@ def extract_endgame_features(df, fen_column='FEN'):
             features.append(feature_dict)
 
         except Exception as e:
-            print(f"Error extracting endgame features for FEN {fen}: {e}")
+            logger.info(f"Error extracting endgame features for FEN {fen}: {e}")
             features.append({'idx': idx})
 
     # Create DataFrame from features
@@ -554,5 +556,5 @@ def extract_endgame_features(df, fen_column='FEN'):
     # Fill NaN values
     endgame_features_df = endgame_features_df.fillna(0)
 
-    print(f"Created endgame feature set with {endgame_features_df.shape[1]} features")
+    logger.info(f"Created endgame feature set with {endgame_features_df.shape[1]} features")
     return endgame_features_df
