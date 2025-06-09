@@ -13,6 +13,8 @@ This module implements an advanced approach to opening tag prediction with:
 import pandas as pd
 import numpy as np
 from tqdm import tqdm
+import concurrent.futures
+import os
 from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier, VotingClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.svm import SVC
@@ -23,6 +25,7 @@ from sklearn.pipeline import Pipeline
 from chess_puzzle_rating.features.position_features import extract_fen_features
 from chess_puzzle_rating.features.move_features import extract_opening_move_features, infer_eco_codes
 from chess_puzzle_rating.utils.progress import get_logger
+from chess_puzzle_rating.utils.config import get_config
 
 
 def extract_primary_family(tag_str):
@@ -143,6 +146,110 @@ def create_eco_mapping(df, tag_column='OpeningTags'):
     return {'family': eco_to_family, 'variation': eco_to_variation}
 
 
+def process_prediction_chunk(chunk_data):
+    """
+    Process a chunk of puzzles without tags to predict opening tags.
+    This function is designed to be run in parallel.
+
+    Parameters
+    ----------
+    chunk_data : tuple
+        Tuple containing (chunk_df, family_model, variation_models, X_predict, eco_features, eco_family_map, eco_variation_map)
+
+    Returns
+    -------
+    pandas.DataFrame
+        DataFrame with predicted tags and confidence scores for the chunk
+    """
+    chunk_df, family_model, variation_models, X_predict, eco_features, eco_family_map, eco_variation_map = chunk_data
+
+    # First predict families
+    predicted_families = family_model.predict(X_predict)
+    family_probs = family_model.predict_proba(X_predict)
+    family_confidence = np.max(family_probs, axis=1)
+
+    # Then predict variations for each family
+    predicted_variations = [""] * len(chunk_df)
+    variation_confidence = np.zeros(len(chunk_df))
+
+    # For each puzzle in the chunk
+    for i, idx in enumerate(chunk_df.index):
+        # Get the model's family prediction
+        model_family = predicted_families[i]
+
+        # Check if any ECO codes match for this puzzle
+        eco_family = None
+        eco_variation = None
+        eco_confidence = 0.0
+
+        # Look for matching ECO codes
+        for eco_col, family in eco_family_map.items():
+            if eco_col in eco_features.columns and eco_features.loc[idx, eco_col] == 1:
+                eco_family = family
+                eco_confidence = 0.8  # High confidence for ECO-based prediction
+
+                # Check if there's a variation for this ECO code
+                if eco_col in eco_variation_map:
+                    eco_variation = eco_variation_map[eco_col]
+                break
+
+        # Combine model and ECO predictions for family
+        if eco_family:
+            # If model and ECO agree, increase confidence
+            if model_family == eco_family:
+                family_confidence[i] = min(0.95, family_confidence[i] + 0.15)
+            # If they disagree but ECO confidence is high, use ECO prediction
+            elif eco_confidence > family_confidence[i]:
+                predicted_families[i] = eco_family
+                family_confidence[i] = eco_confidence
+
+        # Predict variation
+        if predicted_families[i] in variation_models:
+            var_model = variation_models[predicted_families[i]]
+            var_pred = var_model.predict([X_predict.loc[idx]])[0]
+            var_probs = var_model.predict_proba([X_predict.loc[idx]])
+            var_conf = np.max(var_probs, axis=1)[0]
+
+            # If ECO predicts a variation for this family, consider it
+            if eco_variation and predicted_families[i] == eco_family:
+                # If model and ECO agree on variation, increase confidence
+                if var_pred == eco_variation:
+                    var_conf = min(0.95, var_conf + 0.15)
+                # If they disagree but ECO confidence is high, use ECO prediction
+                elif eco_confidence > var_conf:
+                    var_pred = eco_variation
+                    var_conf = eco_confidence
+
+            predicted_variations[i] = var_pred
+            variation_confidence[i] = var_conf
+
+    # Combine family and variation predictions
+    predicted_tags = []
+    for family, variation in zip(predicted_families, predicted_variations):
+        if variation:
+            predicted_tags.append(f"{family}_{variation}")
+        else:
+            predicted_tags.append(family)
+
+    # Calculate overall confidence as a weighted average of family and variation confidence
+    overall_confidence = 0.7 * family_confidence
+    variation_mask = np.array([bool(v) for v in predicted_variations])
+    if any(variation_mask):
+        overall_confidence[variation_mask] += 0.3 * variation_confidence[variation_mask]
+
+    # Create results DataFrame
+    results_df = pd.DataFrame({
+        'predicted_family': predicted_families,
+        'predicted_variation': predicted_variations,
+        'predicted_tag': predicted_tags,
+        'family_confidence': family_confidence,
+        'variation_confidence': variation_confidence,
+        'prediction_confidence': overall_confidence
+    }, index=chunk_df.index)
+
+    return results_df
+
+
 def predict_hierarchical_opening_tags(df, tag_column='OpeningTags', fen_features=None, move_features=None, eco_features=None):
     """
     Predict opening tags using a hierarchical approach (family → variation)
@@ -234,32 +341,33 @@ def predict_hierarchical_opening_tags(df, tag_column='OpeningTags', fen_features
     # Train family model on all data with tags
     family_model.fit(X_train, y_train_family)
 
-    # Create variation models for each family with sufficient data
-    variation_models = {}
-    for family in valid_families:
+    # Function to train a variation model for a specific family
+    def train_variation_model(family_data):
+        family, df_with_tags, combined_features = family_data
+
         # Get data for this family
-        family_data = df_with_tags[df_with_tags['primary_family'] == family]
+        family_subset = df_with_tags[df_with_tags['primary_family'] == family]
 
         # Count variations within this family
-        variation_counts = family_data['variation'].value_counts()
+        variation_counts = family_subset['variation'].value_counts()
         valid_variations = variation_counts[variation_counts >= 3].index.tolist()
 
         # Skip if not enough variation data
         if len(valid_variations) < 2:
-            continue
+            return family, None
 
         # Prepare data for variation prediction
-        X_train_var = combined_features.loc[family_data.index]
-        y_train_var = family_data['variation']
+        X_train_var = combined_features.loc[family_subset.index]
+        y_train_var = family_subset['variation']
 
         # Only keep rows with valid variations
-        valid_var_mask = family_data['variation'].isin(valid_variations)
+        valid_var_mask = family_subset['variation'].isin(valid_variations)
         X_train_var = X_train_var[valid_var_mask]
         y_train_var = y_train_var[valid_var_mask]
 
         # Skip if not enough samples after filtering
         if len(X_train_var) < 10:
-            continue
+            return family, None
 
         # Create a simpler model for variation prediction (less data available)
         var_model = RandomForestClassifier(n_estimators=50, min_samples_leaf=2, 
@@ -268,10 +376,43 @@ def predict_hierarchical_opening_tags(df, tag_column='OpeningTags', fen_features
         # Train variation model
         try:
             var_model.fit(X_train_var, y_train_var)
-            variation_models[family] = var_model
             print(f"Trained variation model for {family} with {len(valid_variations)} variations")
+            return family, var_model
         except Exception as e:
             print(f"Error training variation model for {family}: {e}")
+            return family, None
+
+    # Get configuration for parallelization
+    config = get_config()
+    performance_config = config.get('performance', {})
+    parallel_config = performance_config.get('parallel', {})
+
+    # Determine the number of worker processes to use
+    n_workers = parallel_config.get('n_workers')
+    if n_workers is None:
+        n_workers = os.cpu_count() or 1
+
+    logger.info(f"Using {n_workers} worker processes for parallel variation model training")
+
+    # Create variation models for each family with sufficient data in parallel
+    variation_models = {}
+
+    # Prepare data for parallel processing
+    family_data_list = [(family, df_with_tags, combined_features) for family in valid_families]
+
+    # Process families in parallel
+    with concurrent.futures.ProcessPoolExecutor(max_workers=n_workers) as executor:
+        # Submit all tasks and collect futures
+        futures = [executor.submit(train_variation_model, family_data) for family_data in family_data_list]
+
+        # Process results as they complete
+        for future in tqdm(concurrent.futures.as_completed(futures), total=len(futures), desc="Training variation models"):
+            try:
+                family, model = future.result()
+                if model is not None:
+                    variation_models[family] = model
+            except Exception as e:
+                logger.error(f"Error in variation model training: {e}")
 
     # Store all models in a dictionary
     models_dict = {
@@ -283,95 +424,58 @@ def predict_hierarchical_opening_tags(df, tag_column='OpeningTags', fen_features
     df_without_tags = df[~has_tags].copy()
     X_predict = combined_features.loc[df_without_tags.index]
 
-    # First predict families
-    predicted_families = family_model.predict(X_predict)
-    family_probs = family_model.predict_proba(X_predict)
-    family_confidence = np.max(family_probs, axis=1)
+    # Get configuration for parallelization
+    config = get_config()
+    performance_config = config.get('performance', {})
+    parallel_config = performance_config.get('parallel', {})
 
-    # Then predict variations for each family
-    predicted_variations = [""] * len(df_without_tags)
-    variation_confidence = np.zeros(len(df_without_tags))
+    # Determine the number of worker processes to use
+    n_workers = parallel_config.get('n_workers')
+    if n_workers is None:
+        n_workers = os.cpu_count() or 1
+
+    logger.info(f"Using {n_workers} worker processes for parallel prediction")
 
     # Use ECO codes to enhance predictions
     eco_family_map = eco_mapping['family']
     eco_variation_map = eco_mapping['variation']
 
-    # For each puzzle without tags
-    for i, idx in enumerate(df_without_tags.index):
-        # Get the model's family prediction
-        model_family = predicted_families[i]
+    # If there are no puzzles without tags, return an empty DataFrame
+    if len(df_without_tags) == 0:
+        return pd.DataFrame(), models_dict, combined_features
 
-        # Check if any ECO codes match for this puzzle
-        eco_family = None
-        eco_variation = None
-        eco_confidence = 0.0
+    # Split the dataframe into chunks for parallel processing
+    chunk_size = max(1, len(df_without_tags) // n_workers)
+    chunks = []
 
-        # Look for matching ECO codes
-        for eco_col, family in eco_family_map.items():
-            if eco_col in eco_features.columns and eco_features.loc[idx, eco_col] == 1:
-                eco_family = family
-                eco_confidence = 0.8  # High confidence for ECO-based prediction
+    for i in range(0, len(df_without_tags), chunk_size):
+        end = min(i + chunk_size, len(df_without_tags))
+        chunk_df = df_without_tags.iloc[i:end]
+        chunk_X = X_predict.loc[chunk_df.index]
+        chunks.append((chunk_df, family_model, variation_models, chunk_X, eco_features, eco_family_map, eco_variation_map))
 
-                # Check if there's a variation for this ECO code
-                if eco_col in eco_variation_map:
-                    eco_variation = eco_variation_map[eco_col]
-                break
+    # Process chunks in parallel
+    results = []
+    with concurrent.futures.ProcessPoolExecutor(max_workers=n_workers) as executor:
+        # Submit all tasks and collect futures
+        futures = [executor.submit(process_prediction_chunk, chunk) for chunk in chunks]
 
-        # Combine model and ECO predictions for family
-        if eco_family:
-            # If model and ECO agree, increase confidence
-            if model_family == eco_family:
-                family_confidence[i] = min(0.95, family_confidence[i] + 0.15)
-            # If they disagree but ECO confidence is high, use ECO prediction
-            elif eco_confidence > family_confidence[i]:
-                predicted_families[i] = eco_family
-                family_confidence[i] = eco_confidence
+        # Process results as they complete
+        for future in tqdm(concurrent.futures.as_completed(futures), total=len(futures), desc="Processing prediction chunks"):
+            try:
+                chunk_result = future.result()
+                results.append(chunk_result)
+            except Exception as e:
+                logger.error(f"Error processing prediction chunk: {e}")
 
-        # Predict variation
-        if predicted_families[i] in variation_models:
-            var_model = variation_models[predicted_families[i]]
-            var_pred = var_model.predict([X_predict.loc[idx]])[0]
-            var_probs = var_model.predict_proba([X_predict.loc[idx]])
-            var_conf = np.max(var_probs, axis=1)[0]
-
-            # If ECO predicts a variation for this family, consider it
-            if eco_variation and predicted_families[i] == eco_family:
-                # If model and ECO agree on variation, increase confidence
-                if var_pred == eco_variation:
-                    var_conf = min(0.95, var_conf + 0.15)
-                # If they disagree but ECO confidence is high, use ECO prediction
-                elif eco_confidence > var_conf:
-                    var_pred = eco_variation
-                    var_conf = eco_confidence
-
-            predicted_variations[i] = var_pred
-            variation_confidence[i] = var_conf
-
-    # Combine family and variation predictions
-    predicted_tags = []
-    for family, variation in zip(predicted_families, predicted_variations):
-        if variation:
-            predicted_tags.append(f"{family}_{variation}")
-        else:
-            predicted_tags.append(family)
-
-    # Calculate overall confidence as a weighted average of family and variation confidence
-    overall_confidence = 0.7 * family_confidence
-    variation_mask = np.array([bool(v) for v in predicted_variations])
-    if any(variation_mask):
-        overall_confidence[variation_mask] += 0.3 * variation_confidence[variation_mask]
-
-    # Create results DataFrame
-    results_df = pd.DataFrame({
-        'predicted_family': predicted_families,
-        'predicted_variation': predicted_variations,
-        'predicted_tag': predicted_tags,
-        'family_confidence': family_confidence,
-        'variation_confidence': variation_confidence,
-        'prediction_confidence': overall_confidence
-    }, index=df_without_tags.index)
-
-    return results_df, models_dict, combined_features
+    # Combine results from all chunks
+    if results:
+        results_df = pd.concat(results)
+        logger.info(f"Predicted tags for {len(results_df)} puzzles without tags")
+        return results_df, models_dict, combined_features
+    else:
+        # Return empty DataFrame if no results
+        return pd.DataFrame(), models_dict, combined_features
 
 
 def predict_missing_opening_tags(df, tag_column='OpeningTags', fen_features=None, move_features=None, eco_features=None):
@@ -422,7 +526,7 @@ def predict_missing_opening_tags(df, tag_column='OpeningTags', fen_features=None
         move_features=move_features,
         eco_features=eco_features
     )
-
+    logger.info(f"Identify puzzles without tags")
     # Identify puzzles without tags
     has_tags = ~df[tag_column].isna() & (df[tag_column] != '')
     df_without_tags = df[~has_tags].copy()
