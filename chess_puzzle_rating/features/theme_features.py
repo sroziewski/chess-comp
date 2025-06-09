@@ -10,7 +10,7 @@ from collections import Counter
 import re
 from tqdm import tqdm
 import logging
-from joblib import Parallel, delayed
+import concurrent.futures
 
 log = logging.getLogger(__name__)
 
@@ -82,9 +82,13 @@ def engineer_chess_theme_features(df, theme_column='Themes',
 
     # --- Pre-computation: Parse all themes and gather statistics in parallel ---
     log.info("Parsing themes in parallel...")
-    parsed_results = Parallel(n_jobs=-1)(
-        delayed(parse_theme)(item) for item in tqdm(df_copy[theme_column].items(), desc="Parsing Themes")
-    )
+    items = list(df_copy[theme_column].items())
+    with concurrent.futures.ProcessPoolExecutor() as executor:
+        parsed_results = list(tqdm(
+            executor.map(parse_theme, items),
+            total=len(items),
+            desc="Parsing Themes"
+        ))
 
     # Combine results
     all_themes_info = []
@@ -134,9 +138,17 @@ def engineer_chess_theme_features(df, theme_column='Themes',
 
     # --- Feature Generation Loop with Parallel Processing ---
     log.info("Generating features in parallel...")
-    features_list = Parallel(n_jobs=-1)(
-        delayed(process_entry)(entry, top_themes) for entry in tqdm(all_themes_info, desc="Generating Features")
-    )
+
+    # Helper function to handle multiple arguments for process_entry
+    def process_entry_with_themes(entry):
+        return process_entry(entry, top_themes)
+
+    with concurrent.futures.ProcessPoolExecutor() as executor:
+        features_list = list(tqdm(
+            executor.map(process_entry_with_themes, all_themes_info),
+            total=len(all_themes_info),
+            desc="Generating Features"
+        ))
 
     # Create DataFrame from features list
     themes_df = pd.DataFrame(features_list).set_index('idx')
