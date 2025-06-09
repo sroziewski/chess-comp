@@ -23,7 +23,7 @@ from ..utils.progress import (
     track_progress, record_metric, create_performance_dashboard
 )
 from ..features.pipeline import complete_feature_engineering
-from ..utils.move_conversion import uci_to_pgn
+from ..utils.move_conversion import uci_to_pgn, uci_to_pgn_parallel
 
 
 class DataValidationError(Exception):
@@ -374,17 +374,40 @@ class ChessPuzzleDataPipeline:
                         combined_df[col] = combined_df[col].fillna('')
 
         # Convert UCI moves to PGN format
-        self.logger.info("Converting UCI moves to PGN format...")
+        self.logger.info("Converting UCI moves to PGN format in parallel...")
         start_time = time.time()
 
-        # Apply the conversion function to each row
-        combined_df['MovesPGN'] = combined_df.apply(
-            lambda row: uci_to_pgn(row['Moves'], row['FEN']) if not pd.isna(row['Moves']) and row['Moves'] else '',
-            axis=1
-        )
+        # Extract moves and FENs for parallel processing
+        moves_list = combined_df['Moves'].tolist()
+        fens_list = combined_df['FEN'].tolist()
+
+        # Filter out empty or NaN moves
+        valid_indices = []
+        valid_moves = []
+        valid_fens = []
+
+        for i, (moves, fen) in enumerate(zip(moves_list, fens_list)):
+            if not pd.isna(moves) and moves:
+                valid_indices.append(i)
+                valid_moves.append(moves)
+                valid_fens.append(fen)
+
+        # Convert in parallel
+        if valid_moves:
+            pgn_results = uci_to_pgn_parallel(valid_moves, valid_fens)
+        else:
+            pgn_results = []
+
+        # Create a list of PGN moves for all rows (including empty ones)
+        all_pgn_moves = [''] * len(combined_df)
+        for idx, pgn in zip(valid_indices, pgn_results):
+            all_pgn_moves[idx] = pgn
+
+        # Assign the results back to the DataFrame
+        combined_df['MovesPGN'] = all_pgn_moves
 
         elapsed_time = time.time() - start_time
-        self.logger.info(f"UCI to PGN conversion completed in {elapsed_time:.2f} seconds.")
+        self.logger.info(f"Parallel UCI to PGN conversion completed in {elapsed_time:.2f} seconds.")
         record_metric("uci_to_pgn_conversion_time", elapsed_time, "performance")
 
         # Handle missing values in optional columns
