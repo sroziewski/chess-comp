@@ -13,7 +13,7 @@ from ..utils.config import get_config
 from ..utils.progress import get_logger
 
 # Initialize logger
-logger = get_logger(__name__)
+logger = get_logger()
 
 
 def extract_opening_move_features(df, moves_column='MovesPGN'):

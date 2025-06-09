@@ -35,7 +35,7 @@ from chess_puzzle_rating.utils.progress import (
 config = get_config()
 
 # Set up logger
-logger = get_logger(__name__)
+logger = get_logger()
 
 class BaseModel:
     """Base class for all models used in stacking."""
