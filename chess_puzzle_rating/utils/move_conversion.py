@@ -76,6 +76,30 @@ def chunk_list(lst: List, chunk_size: int) -> Iterator[List]:
     for i in range(0, len(lst), chunk_size):
         yield lst[i:i + chunk_size]
 
+def process_chunk(chunk_data: Tuple[List[Union[str, List[str]]], List[Optional[str]]]) -> List[str]:
+    """
+    Process a chunk of UCI moves and convert them to PGN format.
+
+    Parameters
+    ----------
+    chunk_data : Tuple[List[Union[str, List[str]]], List[Optional[str]]]
+        A tuple containing a list of UCI move sequences and a list of FEN positions
+
+    Returns
+    -------
+    List[str]
+        A list of PGN formatted move sequences
+    """
+    chunk_moves, chunk_fens = chunk_data
+    results = []
+
+    # Process each item in the chunk
+    for moves, fen in zip(chunk_moves, chunk_fens):
+        results.append(uci_to_pgn(moves, fen))
+
+    return results
+
+
 def uci_to_pgn_parallel(moves_list: List[Union[str, List[str]]], 
                         fens_list: Optional[List[str]] = None, 
                         max_workers: int = None,
@@ -133,17 +157,6 @@ def uci_to_pgn_parallel(moves_list: List[Union[str, List[str]]],
     # Create chunks of data
     moves_chunks = list(chunk_list(moves_list, chunk_size))
     fens_chunks = list(chunk_list(fens_list, chunk_size))
-
-    # Define a worker function for processing a chunk
-    def process_chunk(chunk_data: Tuple[List[Union[str, List[str]]], List[Optional[str]]]) -> List[str]:
-        chunk_moves, chunk_fens = chunk_data
-        results = []
-
-        # Process each item in the chunk
-        for moves, fen in zip(chunk_moves, chunk_fens):
-            results.append(uci_to_pgn(moves, fen))
-
-        return results
 
     # Process chunks in parallel
     all_results = []
