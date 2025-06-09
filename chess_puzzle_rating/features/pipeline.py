@@ -24,6 +24,7 @@ from chess_puzzle_rating.features.move_features import extract_opening_move_feat
 from chess_puzzle_rating.features.opening_tags import predict_missing_opening_tags
 from chess_puzzle_rating.features.opening_features import engineer_chess_opening_features
 from chess_puzzle_rating.features.endgame_features import extract_endgame_features
+from chess_puzzle_rating.features.theme_features import engineer_chess_theme_features
 from chess_puzzle_rating.utils.config import get_config
 
 # Get logger
@@ -306,12 +307,33 @@ def complete_feature_engineering(df, tag_column='OpeningTags', n_workers=None, c
     record_metric("original_tags_count", original_tags_count, "tag_stats")
     record_metric("total_tags_with_predictions", total_tags_with_predictions, "tag_stats")
 
-    # Step 6: Combine all feature sets
-    logger.info("Step 6: Combining all feature sets")
+    # Step 6: Engineer theme features
+    logger.info("Step 6: Engineering theme features")
+    theme_features_start = time.time()
+
+    # Use the theme feature engineering function
+    theme_features = engineer_chess_theme_features(
+        df,
+        theme_column='Themes',
+        min_theme_freq=5,
+        max_themes=100,
+        n_svd_components=10,
+        n_hash_features=15
+    )
+
+    theme_features_time = time.time() - theme_features_start
+    logger.info(f"Theme features engineering completed in {theme_features_time:.2f} seconds")
+    logger.info(f"Generated {theme_features.shape[1]} theme features")
+    record_metric("theme_features_time", theme_features_time, "performance")
+    record_metric("theme_features_count", theme_features.shape[1], "feature_stats")
+
+    # Step 7: Combine all feature sets
+    logger.info("Step 7: Combining all feature sets")
     combine_start = time.time()
 
     final_features = pd.concat([
         opening_features,
+        theme_features,
         position_features,
         move_features,
         eco_features,
