@@ -10,22 +10,24 @@ This module implements an advanced approach to opening tag prediction with:
    prediction accuracy and confidence
 """
 
-import pandas as pd
-import numpy as np
-from tqdm import tqdm
 import concurrent.futures
 import os
-from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier, VotingClassifier
-from sklearn.linear_model import LogisticRegression
-from sklearn.svm import SVC
-from sklearn.model_selection import cross_val_score
-from sklearn.preprocessing import StandardScaler
-from sklearn.pipeline import Pipeline
 
-from chess_puzzle_rating.features.position_features import extract_fen_features
+import numpy as np
+import pandas as pd
+from lightgbm import LGBMClassifier
+from sklearn.ensemble import RandomForestClassifier, VotingClassifier, \
+    HistGradientBoostingClassifier
+from sklearn.model_selection import cross_val_score
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
+from sklearn.svm import SVC
+from tqdm import tqdm
+
 from chess_puzzle_rating.features.move_features import extract_opening_move_features, infer_eco_codes
-from chess_puzzle_rating.utils.progress import get_logger
+from chess_puzzle_rating.features.position_features import extract_fen_features
 from chess_puzzle_rating.utils.config import get_config
+from chess_puzzle_rating.utils.progress import get_logger
 
 
 def extract_primary_family(tag_str):
@@ -138,7 +140,8 @@ def create_eco_mapping(df, tag_column='OpeningTags'):
             eco_to_family[eco_col] = most_common_family
 
             # Get the most common variation for this ECO code
-            variation_counts = df_with_tags.loc[has_eco & (df_with_tags['family'] == most_common_family), 'variation'].value_counts()
+            variation_counts = df_with_tags.loc[
+                has_eco & (df_with_tags['family'] == most_common_family), 'variation'].value_counts()
             if len(variation_counts) > 0 and variation_counts.iloc[0] >= 3:
                 most_common_variation = variation_counts.index[0]
                 eco_to_variation[eco_col] = most_common_variation
@@ -250,7 +253,8 @@ def process_prediction_chunk(chunk_data):
     return results_df
 
 
-def predict_hierarchical_opening_tags(df, tag_column='OpeningTags', fen_features=None, move_features=None, eco_features=None):
+def predict_hierarchical_opening_tags(df, tag_column='OpeningTags', fen_features=None, move_features=None,
+                                      eco_features=None):
     """
     Predict opening tags using a hierarchical approach (family → variation)
     with strengthened ECO code integration.
@@ -313,11 +317,20 @@ def predict_hierarchical_opening_tags(df, tag_column='OpeningTags', fen_features
     y_train_family = df_with_tags['primary_family']
 
     # Create ensemble model for family prediction
-    rf_model = RandomForestClassifier(n_estimators=100, min_samples_leaf=5,
-                                     class_weight='balanced', random_state=42)
+    hist_gb_model = HistGradientBoostingClassifier(
+        max_iter=100,  # Similar to n_estimators
+        learning_rate=0.1,
+        max_depth=4,
+        random_state=42
+    )
 
-    gb_model = GradientBoostingClassifier(n_estimators=100, learning_rate=0.1,
-                                         max_depth=3, random_state=42)
+    lgb_model = LGBMClassifier(
+        n_estimators=100,
+        learning_rate=0.1,
+        max_depth=4,
+        random_state=42,
+        n_jobs=-1  # Use all available cores
+    )
 
     svm_pipeline = Pipeline([
         ('scaler', StandardScaler()),
@@ -326,8 +339,8 @@ def predict_hierarchical_opening_tags(df, tag_column='OpeningTags', fen_features
 
     family_model = VotingClassifier(
         estimators=[
-            ('rf', rf_model),
-            ('gb', gb_model),
+            ('rf', hist_gb_model),
+            ('gb', lgb_model),
             ('svm', svm_pipeline)
         ],
         voting='soft',
@@ -370,8 +383,8 @@ def predict_hierarchical_opening_tags(df, tag_column='OpeningTags', fen_features
             return family, None
 
         # Create a simpler model for variation prediction (less data available)
-        var_model = RandomForestClassifier(n_estimators=50, min_samples_leaf=2, 
-                                          class_weight='balanced', random_state=42)
+        var_model = RandomForestClassifier(n_estimators=50, min_samples_leaf=2,
+                                           class_weight='balanced', random_state=42)
 
         # Train variation model
         try:
@@ -406,7 +419,8 @@ def predict_hierarchical_opening_tags(df, tag_column='OpeningTags', fen_features
         futures = [executor.submit(train_variation_model, family_data) for family_data in family_data_list]
 
         # Process results as they complete
-        for future in tqdm(concurrent.futures.as_completed(futures), total=len(futures), desc="Training variation models"):
+        for future in tqdm(concurrent.futures.as_completed(futures), total=len(futures),
+                           desc="Training variation models"):
             try:
                 family, model = future.result()
                 if model is not None:
@@ -452,7 +466,8 @@ def predict_hierarchical_opening_tags(df, tag_column='OpeningTags', fen_features
         end = min(i + chunk_size, len(df_without_tags))
         chunk_df = df_without_tags.iloc[i:end]
         chunk_X = X_predict.loc[chunk_df.index]
-        chunks.append((chunk_df, family_model, variation_models, chunk_X, eco_features, eco_family_map, eco_variation_map))
+        chunks.append(
+            (chunk_df, family_model, variation_models, chunk_X, eco_features, eco_family_map, eco_variation_map))
 
     # Process chunks in parallel
     results = []
@@ -461,7 +476,8 @@ def predict_hierarchical_opening_tags(df, tag_column='OpeningTags', fen_features
         futures = [executor.submit(process_prediction_chunk, chunk) for chunk in chunks]
 
         # Process results as they complete
-        for future in tqdm(concurrent.futures.as_completed(futures), total=len(futures), desc="Processing prediction chunks"):
+        for future in tqdm(concurrent.futures.as_completed(futures), total=len(futures),
+                           desc="Processing prediction chunks"):
             try:
                 chunk_result = future.result()
                 results.append(chunk_result)
@@ -478,7 +494,8 @@ def predict_hierarchical_opening_tags(df, tag_column='OpeningTags', fen_features
         return pd.DataFrame(), models_dict, combined_features
 
 
-def predict_missing_opening_tags(df, tag_column='OpeningTags', fen_features=None, move_features=None, eco_features=None):
+def predict_missing_opening_tags(df, tag_column='OpeningTags', fen_features=None, move_features=None,
+                                 eco_features=None):
     """
     Predict missing opening tags using an ensemble approach with hierarchical classification.
 
@@ -520,7 +537,7 @@ def predict_missing_opening_tags(df, tag_column='OpeningTags', fen_features=None
 
     # Use hierarchical prediction
     hierarchical_results, models_dict, _ = predict_hierarchical_opening_tags(
-        df, 
+        df,
         tag_column=tag_column,
         fen_features=fen_features,
         move_features=move_features,
