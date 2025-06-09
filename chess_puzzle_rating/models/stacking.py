@@ -262,36 +262,79 @@ class XGBoostModel(BaseModel):
         return self
 
 
-class NeuralNetworkRegressor(nn.Module):
-    """Neural network model for regression."""
+class EnhancedNeuralNetworkRegressor(nn.Module):
+    """Enhanced neural network model for regression with residual connections and more options."""
 
-    def __init__(self, input_dim: int, hidden_dims: List[int] = None):
+    def __init__(self, input_dim: int, hidden_dims: List[int] = None, 
+                 dropout_rate: float = 0.3, 
+                 use_residual: bool = True,
+                 activation: str = 'relu'):
         """
-        Initialize the neural network model.
+        Initialize the enhanced neural network model.
 
         Args:
             input_dim: Number of input features
             hidden_dims: List of hidden layer dimensions
+            dropout_rate: Dropout probability
+            use_residual: Whether to use residual connections
+            activation: Activation function ('relu', 'leaky_relu', 'elu', 'gelu')
         """
-        super(NeuralNetworkRegressor, self).__init__()
+        super(EnhancedNeuralNetworkRegressor, self).__init__()
 
         if hidden_dims is None:
             hidden_dims = [256, 128, 64]
 
-        layers = []
+        # Select activation function
+        if activation == 'relu':
+            self.activation = nn.ReLU()
+        elif activation == 'leaky_relu':
+            self.activation = nn.LeakyReLU(0.1)
+        elif activation == 'elu':
+            self.activation = nn.ELU()
+        elif activation == 'gelu':
+            self.activation = nn.GELU()
+        else:
+            self.activation = nn.ReLU()
+
+        self.use_residual = use_residual
+        self.dropout_rate = dropout_rate
+
+        # Input normalization
+        self.input_norm = nn.BatchNorm1d(input_dim)
+
+        # Create layers
+        self.layers = nn.ModuleList()
         prev_dim = input_dim
 
         for i, dim in enumerate(hidden_dims):
-            layers.append(nn.Linear(prev_dim, dim))
-            layers.append(nn.ReLU())
-            layers.append(nn.BatchNorm1d(dim))
-            layers.append(nn.Dropout(0.3))
+            layer_block = nn.ModuleDict({
+                'linear': nn.Linear(prev_dim, dim),
+                'bn': nn.BatchNorm1d(dim),
+                'dropout': nn.Dropout(dropout_rate)
+            })
+
+            # Add residual connection if dimensions match and not first layer
+            if use_residual and i > 0 and prev_dim == dim:
+                layer_block['residual'] = True
+            else:
+                layer_block['residual'] = False
+
+            self.layers.append(layer_block)
             prev_dim = dim
 
         # Output layer
-        layers.append(nn.Linear(prev_dim, 1))
+        self.output_layer = nn.Linear(prev_dim, 1)
 
-        self.model = nn.Sequential(*layers)
+        # Initialize weights
+        self._init_weights()
+
+    def _init_weights(self):
+        """Initialize weights with He initialization"""
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.kaiming_normal_(m.weight, mode='fan_in', nonlinearity='relu')
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -303,7 +346,77 @@ class NeuralNetworkRegressor(nn.Module):
         Returns:
             Output tensor
         """
-        return self.model(x).squeeze()
+        # Normalize input
+        x = self.input_norm(x)
+
+        # Process through hidden layers
+        for i, layer_block in enumerate(self.layers):
+            identity = x
+
+            x = layer_block['linear'](x)
+            x = self.activation(x)
+            x = layer_block['bn'](x)
+
+            # Apply residual connection if specified
+            if layer_block['residual']:
+                x = x + identity
+
+            x = layer_block['dropout'](x)
+
+        # Output layer
+        x = self.output_layer(x)
+
+        return x.squeeze()
+
+
+class ChessRatingLoss(nn.Module):
+    """
+    Custom loss function for chess rating prediction that penalizes more for errors
+    in certain rating ranges where precision is more important.
+    """
+    def __init__(self, rating_ranges=None, weights=None):
+        """
+        Initialize the chess rating loss.
+
+        Args:
+            rating_ranges: List of rating range tuples [(min1, max1), (min2, max2), ...]
+            weights: List of weights for each range (higher weight = higher penalty)
+        """
+        super(ChessRatingLoss, self).__init__()
+
+        # Default ranges and weights if not provided
+        if rating_ranges is None:
+            # Lower ratings (more beginners) might need more precision
+            rating_ranges = [(0, 1200), (1200, 1800), (1800, 2400), (2400, 3500)]
+
+        if weights is None:
+            # Higher weight for middle ranges where most players are
+            weights = [1.0, 1.5, 1.2, 1.0]
+
+        self.rating_ranges = rating_ranges
+        self.weights = weights
+
+    def forward(self, pred, target):
+        """
+        Calculate the weighted MSE loss.
+
+        Args:
+            pred: Predicted ratings
+            target: Ground truth ratings
+
+        Returns:
+            Weighted loss
+        """
+        mse_loss = (pred - target) ** 2
+
+        # Apply weights based on target rating ranges
+        weighted_loss = torch.zeros_like(mse_loss)
+
+        for i, (min_val, max_val) in enumerate(self.rating_ranges):
+            mask = (target >= min_val) & (target < max_val)
+            weighted_loss[mask] = mse_loss[mask] * self.weights[i]
+
+        return weighted_loss.mean()
 
 
 class NeuralNetworkModel(BaseModel):
@@ -324,6 +437,12 @@ class NeuralNetworkModel(BaseModel):
         self.batch_size = self.model_params.get('batch_size', 256)
         self.epochs = self.model_params.get('epochs', 100)
         self.patience = self.model_params.get('patience', 10)
+        self.dropout_rate = self.model_params.get('dropout_rate', 0.3)
+        self.use_residual = self.model_params.get('use_residual', True)
+        self.activation = self.model_params.get('activation', 'relu')
+        self.use_custom_loss = self.model_params.get('use_custom_loss', True)
+        self.rating_ranges = self.model_params.get('rating_ranges', None)
+        self.loss_weights = self.model_params.get('loss_weights', None)
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.model = None
         self.feature_importances_ = None
@@ -341,7 +460,13 @@ class NeuralNetworkModel(BaseModel):
             self: The fitted model
         """
         self.input_dim = X.shape[1]
-        self.model = NeuralNetworkRegressor(self.input_dim, self.hidden_dims).to(self.device)
+        self.model = EnhancedNeuralNetworkRegressor(
+            input_dim=self.input_dim, 
+            hidden_dims=self.hidden_dims,
+            dropout_rate=self.dropout_rate,
+            use_residual=self.use_residual,
+            activation=self.activation
+        ).to(self.device)
 
         # Convert data to PyTorch tensors
         X_tensor = torch.tensor(X.values, dtype=torch.float32)
@@ -361,7 +486,10 @@ class NeuralNetworkModel(BaseModel):
             val_loader = DataLoader(val_dataset, batch_size=self.batch_size, shuffle=False)
 
         # Define loss function and optimizer
-        criterion = nn.MSELoss()
+        if self.use_custom_loss:
+            criterion = ChessRatingLoss(rating_ranges=self.rating_ranges, weights=self.loss_weights)
+        else:
+            criterion = nn.MSELoss()
         optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate)
 
         # Training loop
@@ -457,6 +585,9 @@ class NeuralNetworkModel(BaseModel):
         model_state = {
             'input_dim': self.input_dim,
             'hidden_dims': self.hidden_dims,
+            'dropout_rate': self.dropout_rate,
+            'use_residual': self.use_residual,
+            'activation': self.activation,
             'state_dict': self.model.state_dict()
         }
         torch.save(model_state, path)
@@ -474,7 +605,20 @@ class NeuralNetworkModel(BaseModel):
         model_state = torch.load(path, map_location=self.device)
         self.input_dim = model_state['input_dim']
         self.hidden_dims = model_state['hidden_dims']
-        self.model = NeuralNetworkRegressor(self.input_dim, self.hidden_dims).to(self.device)
+
+        # Get additional parameters if available, otherwise use defaults
+        self.dropout_rate = model_state.get('dropout_rate', self.dropout_rate)
+        self.use_residual = model_state.get('use_residual', self.use_residual)
+        self.activation = model_state.get('activation', self.activation)
+
+        self.model = EnhancedNeuralNetworkRegressor(
+            input_dim=self.input_dim, 
+            hidden_dims=self.hidden_dims,
+            dropout_rate=self.dropout_rate,
+            use_residual=self.use_residual,
+            activation=self.activation
+        ).to(self.device)
+
         self.model.load_state_dict(model_state['state_dict'])
         self.model.eval()
         return self
