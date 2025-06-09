@@ -16,19 +16,14 @@ import os
 import numpy as np
 import pandas as pd
 from lightgbm import LGBMClassifier
-from sklearn.ensemble import RandomForestClassifier, VotingClassifier, \
-    HistGradientBoostingClassifier
-from sklearn.model_selection import cross_val_score
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import StandardScaler
-from sklearn.svm import SVC
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import cross_val_score, train_test_split
 from tqdm import tqdm
 
 from chess_puzzle_rating.features.move_features import extract_opening_move_features, infer_eco_codes
 from chess_puzzle_rating.features.position_features import extract_fen_features
 from chess_puzzle_rating.utils.config import get_config
 from chess_puzzle_rating.utils.progress import get_logger
-
 
 # Comprehensive list of chess opening tags
 OPENING_TAGS = [
@@ -1868,50 +1863,39 @@ def predict_hierarchical_opening_tags(df, tag_column='OpeningTags', fen_features
     X_train = combined_features.loc[df_with_tags.index]
     y_train_family = df_with_tags['primary_family']
 
-    # Create ensemble model for family prediction
-    hist_gb_model = HistGradientBoostingClassifier(
-        max_iter=100,  # Similar to n_estimators
-        learning_rate=0.1,
-        max_depth=3,
-        random_state=42
+    # Create model for family prediction - using a single LGBMClassifier for faster performance
+    family_model = LGBMClassifier(
+        n_estimators=1000,  # Increased from 100 to 500 for better performance
+        learning_rate=0.05,  # Reduced from 0.1 to better work with more trees
+        max_depth=5,  # Kept at 5 which is a good balance
+        num_leaves=31,  # Optimal for depth=5
+        min_child_samples=20,
+        reg_alpha=0.1,
+        reg_lambda=0.1,
+        subsample=0.8,
+        colsample_bytree=0.8,
+        n_jobs=-1,  # Use all available CPU cores
+        verbose=-1,
+        device='gpu',  # GPU acceleration
+        boost_from_average=True,  # Can improve accuracy for imbalanced data
+        feature_fraction_seed=42,  # Add deterministic feature sampling
+        bagging_seed=42,  # Add deterministic bagging
+        early_stopping_rounds=100  # Add early stopping to prevent overfitting
     )
 
-    lgb_model = LGBMClassifier(
-        n_estimators=100,
-        learning_rate=0.1,
-        max_depth=5,  # Increased from 3 to allow more splits
-        min_child_samples=10,  # Reduced from 20 to allow more splits with smaller data
-        min_child_weight=1e-5,  # Added to handle sparse data
-        min_split_gain=1e-8,  # Added to prevent splits with minimal gain
-        reg_alpha=0.1,  # L1 regularization
-        reg_lambda=0.1,  # L2 regularization
-        subsample=0.8,  # Added to reduce overfitting
-        colsample_bytree=0.8,  # Added to reduce overfitting
-        n_jobs=-1,
-        verbose=-1  # Suppress warnings
+    # Split data into train and validation sets (80% train, 20% validation)
+    X_train_split, X_val, y_train_split, y_val = train_test_split(
+        X_train, y_train_family, test_size=0.2, random_state=42, stratify=y_train_family
     )
 
-    svm_pipeline = Pipeline([
-        ('scaler', StandardScaler()),
-        ('svm', SVC(probability=True, class_weight='balanced', random_state=42))
-    ])
+    # Train family model on training set
+    family_model.fit(X_train_split, y_train_split)
 
-    family_model = VotingClassifier(
-        estimators=[
-            ('rf', hist_gb_model),
-            ('gb', lgb_model),
-            ('svm', svm_pipeline)
-        ],
-        voting='soft',
-        weights=[1, 1, 1],
-        n_jobs=-1
-    )
+    # Evaluate on validation set
+    val_accuracy = family_model.score(X_val, y_val)
+    logger.info(f"Family prediction accuracy on validation set: {val_accuracy:.4f}")
 
-    # Evaluate family prediction with cross-validation
-    cv_scores_family = cross_val_score(family_model, X_train, y_train_family, cv=5)
-    logger.info(f"Family prediction accuracy: {cv_scores_family.mean():.4f} ± {cv_scores_family.std():.4f}")
-
-    # Train family model on all data with tags
+    # Retrain family model on all data with tags for final model
     family_model.fit(X_train, y_train_family)
 
     # Function to train a variation model for a specific family
