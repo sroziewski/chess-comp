@@ -12,8 +12,11 @@ import os
 from ..utils.config import get_config
 from ..utils.progress import get_logger
 
+# Initialize logger
+logger = get_logger(__name__)
 
-def extract_opening_move_features(df, moves_column='Moves'):
+
+def extract_opening_move_features(df, moves_column='MovesPGN'):
     """
     Extract features from the opening moves of each puzzle.
 
@@ -163,7 +166,7 @@ def extract_opening_move_features(df, moves_column='Moves'):
     return moves_features_df
 
 
-def infer_eco_codes(df, moves_column='Moves'):
+def infer_eco_codes(df, moves_column='MovesPGN'):
     """
     Infer ECO codes from move sequences.
 
@@ -289,7 +292,7 @@ def infer_eco_codes(df, moves_column='Moves'):
     return eco_features_df
 
 
-def analyze_move_sequence(df, fen_column='FEN', moves_column='Moves'):
+def analyze_move_sequence(df, fen_column='FEN', moves_column='MovesPGN'):
     """
     Analyze move sequences to extract advanced features:
     - Move forcing factors (checks, captures, threats)
