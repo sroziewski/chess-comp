@@ -320,16 +320,23 @@ def predict_hierarchical_opening_tags(df, tag_column='OpeningTags', fen_features
     hist_gb_model = HistGradientBoostingClassifier(
         max_iter=100,  # Similar to n_estimators
         learning_rate=0.1,
-        max_depth=4,
+        max_depth=3,
         random_state=42
     )
 
     lgb_model = LGBMClassifier(
         n_estimators=100,
         learning_rate=0.1,
-        max_depth=4,
-        random_state=42,
-        n_jobs=-1  # Use all available cores
+        max_depth=5,  # Increased from 3 to allow more splits
+        min_child_samples=10,  # Reduced from 20 to allow more splits with smaller data
+        min_child_weight=1e-5,  # Added to handle sparse data
+        min_split_gain=1e-8,  # Added to prevent splits with minimal gain
+        reg_alpha=0.1,  # L1 regularization
+        reg_lambda=0.1,  # L2 regularization
+        subsample=0.8,  # Added to reduce overfitting
+        colsample_bytree=0.8,  # Added to reduce overfitting
+        n_jobs=-1,
+        verbose=-1  # Suppress warnings
     )
 
     svm_pipeline = Pipeline([
@@ -344,7 +351,8 @@ def predict_hierarchical_opening_tags(df, tag_column='OpeningTags', fen_features
             ('svm', svm_pipeline)
         ],
         voting='soft',
-        weights=[2, 1, 1]
+        weights=[1, 1, 1],
+        n_jobs=-1
     )
 
     # Evaluate family prediction with cross-validation
