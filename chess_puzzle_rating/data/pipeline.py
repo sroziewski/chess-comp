@@ -23,6 +23,7 @@ from ..utils.progress import (
     track_progress, record_metric, create_performance_dashboard
 )
 from ..features.pipeline import complete_feature_engineering
+from ..utils.move_conversion import uci_to_pgn
 
 
 class DataValidationError(Exception):
@@ -371,6 +372,20 @@ class ChessPuzzleDataPipeline:
                     elif col == 'Moves':
                         # Empty moves
                         combined_df[col] = combined_df[col].fillna('')
+
+        # Convert UCI moves to PGN format
+        self.logger.info("Converting UCI moves to PGN format...")
+        start_time = time.time()
+
+        # Apply the conversion function to each row
+        combined_df['MovesPGN'] = combined_df.apply(
+            lambda row: uci_to_pgn(row['Moves'], row['FEN']) if not pd.isna(row['Moves']) and row['Moves'] else '',
+            axis=1
+        )
+
+        elapsed_time = time.time() - start_time
+        self.logger.info(f"UCI to PGN conversion completed in {elapsed_time:.2f} seconds.")
+        record_metric("uci_to_pgn_conversion_time", elapsed_time, "performance")
 
         # Handle missing values in optional columns
         if 'Themes' in combined_df.columns:

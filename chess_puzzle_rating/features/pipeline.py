@@ -162,9 +162,9 @@ def complete_feature_engineering(df, tag_column='OpeningTags', n_workers=None, c
 
         # Submit all feature extraction tasks
         position_features_future = executor.submit(cached_extract_fen_features, df)
-        move_features_future = executor.submit(extract_opening_move_features, df)
-        eco_features_future = executor.submit(infer_eco_codes, df)
-        move_analysis_features_future = executor.submit(cached_analyze_move_sequence, df)
+        move_features_future = executor.submit(extract_opening_move_features, df, moves_column='MovesPGN')
+        eco_features_future = executor.submit(infer_eco_codes, df, moves_column='MovesPGN')
+        move_analysis_features_future = executor.submit(cached_analyze_move_sequence, df, moves_column='MovesPGN')
         endgame_features_future = executor.submit(cached_extract_endgame_features, df)
 
         # Create a list of futures and their descriptions for tracking
