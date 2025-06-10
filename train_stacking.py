@@ -5,11 +5,14 @@ This script demonstrates how to use the stacking model implementation to combine
 multiple base models (LightGBM, XGBoost, Neural Networks) for improved prediction accuracy.
 """
 
+import os
+# Set the boost_compute directory to /raid/sroziewski/.boost_compute
+os.environ['BOOST_COMPUTE_DEFAULT_TEMP_PATH'] = '/raid/sroziewski/.boost_compute'
+
 import pandas as pd
 import numpy as np
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
-import os
 import time
 import datetime
 import logging

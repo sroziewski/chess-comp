@@ -1,3 +1,7 @@
+import os
+# Set the boost_compute directory to /raid/sroziewski/.boost_compute
+os.environ['BOOST_COMPUTE_DEFAULT_TEMP_PATH'] = '/raid/sroziewski/.boost_compute'
+
 import pandas as pd
 import numpy as np
 import chess

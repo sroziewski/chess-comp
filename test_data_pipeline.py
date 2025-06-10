@@ -14,6 +14,13 @@ from pathlib import Path
 from chess_puzzle_rating.data.pipeline import run_data_pipeline
 from chess_puzzle_rating.utils.progress import get_logger
 
+# Set the boost_compute directory to /raid/sroziewski/.boost_compute
+boost_compute_dir = '/raid/sroziewski/.boost_compute'
+os.environ['BOOST_COMPUTE_DEFAULT_TEMP_PATH'] = boost_compute_dir
+
+# Create the boost_compute directory if it doesn't exist
+os.makedirs(boost_compute_dir, exist_ok=True)
+
 def main():
     """Run the data pipeline and log information about the results."""
     # Parse command-line arguments

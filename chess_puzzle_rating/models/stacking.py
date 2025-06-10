@@ -8,10 +8,13 @@ This module provides classes and functions for:
 4. Creating rating range-specific models and ensembles
 """
 
+import os
+# Set the boost_compute directory to /raid/sroziewski/.boost_compute
+os.environ['BOOST_COMPUTE_DEFAULT_TEMP_PATH'] = '/raid/sroziewski/.boost_compute'
+
 import numpy as np
 import pandas as pd
 from typing import List, Dict, Union, Tuple, Optional, Any
-import os
 import time
 import logging
 from sklearn.model_selection import KFold
