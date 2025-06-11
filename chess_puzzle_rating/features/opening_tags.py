@@ -1696,6 +1696,75 @@ def create_eco_mapping(df, tag_column='OpeningTags'):
     return {'family': eco_to_family, 'variation': eco_to_variation}
 
 
+def train_variation_model(family_data):
+    """
+    Train a variation model for a specific family.
+    This function is designed to be run in parallel.
+
+    Parameters
+    ----------
+    family_data : tuple
+        Tuple containing (family, df_with_tags, combined_features)
+
+    Returns
+    -------
+    tuple
+        (family, model) where model is the trained LGBMClassifier or None if training failed
+    """
+    family, df_with_tags, combined_features = family_data
+
+    # Get data for this family
+    family_subset = df_with_tags[df_with_tags['primary_family'] == family]
+
+    # Count variations within this family
+    variation_counts = family_subset['variation'].value_counts()
+    valid_variations = variation_counts[variation_counts >= 3].index.tolist()
+
+    # Skip if not enough variation data
+    if len(valid_variations) < 2:
+        return family, None
+
+    # Prepare data for variation prediction
+    X_train_var = combined_features.loc[family_subset.index]
+    y_train_var = family_subset['variation']
+
+    # Only keep rows with valid variations
+    valid_var_mask = family_subset['variation'].isin(valid_variations)
+    X_train_var = X_train_var[valid_var_mask]
+    y_train_var = y_train_var[valid_var_mask]
+
+    # Skip if not enough samples after filtering
+    if len(X_train_var) < 10:
+        return family, None
+
+    # Create a LGBMClassifier for variation prediction (less data available)
+    var_model = LGBMClassifier(
+        n_estimators=100,  # Fewer estimators for smaller datasets
+        learning_rate=0.1,
+        max_depth=4,  # Smaller depth for less data
+        num_leaves=15,  # Fewer leaves for smaller depth
+        min_child_samples=5,
+        reg_alpha=0.1,
+        reg_lambda=0.1,
+        subsample=0.8,
+        colsample_bytree=0.8,
+        n_jobs=-1,  # Use all available CPU cores
+        verbose=-1,
+        device='gpu',  # GPU acceleration
+        boost_from_average=True,
+        random_state=42
+    )
+
+    # Train variation model
+    try:
+        var_model.fit(X_train_var, y_train_var)
+        print(f"Trained variation model for {family} with {len(valid_variations)} variations")
+        return family, var_model
+    except Exception as e:
+        print(f"Error training variation model for {family}: {e}")
+        return family, None
+
+
 def process_prediction_chunk(chunk_data):
     """
     Process a chunk of puzzles without tags to predict opening tags.
@@ -1955,60 +2024,7 @@ def predict_hierarchical_opening_tags(df, tag_column='OpeningTags', fen_features
     )
     family_model.fit(X_train_final, y_train_final, eval_set=[(X_val_final, y_val_final)], eval_metric='multi_logloss')
 
-    # Function to train a variation model for a specific family
-    def train_variation_model(family_data):
-        family, df_with_tags, combined_features = family_data
-
-        # Get data for this family
-        family_subset = df_with_tags[df_with_tags['primary_family'] == family]
-
-        # Count variations within this family
-        variation_counts = family_subset['variation'].value_counts()
-        valid_variations = variation_counts[variation_counts >= 3].index.tolist()
-
-        # Skip if not enough variation data
-        if len(valid_variations) < 2:
-            return family, None
-
-        # Prepare data for variation prediction
-        X_train_var = combined_features.loc[family_subset.index]
-        y_train_var = family_subset['variation']
-
-        # Only keep rows with valid variations
-        valid_var_mask = family_subset['variation'].isin(valid_variations)
-        X_train_var = X_train_var[valid_var_mask]
-        y_train_var = y_train_var[valid_var_mask]
-
-        # Skip if not enough samples after filtering
-        if len(X_train_var) < 10:
-            return family, None
-
-        # Create a LGBMClassifier for variation prediction (less data available)
-        var_model = LGBMClassifier(
-            n_estimators=100,  # Fewer estimators for smaller datasets
-            learning_rate=0.1,
-            max_depth=4,  # Smaller depth for less data
-            num_leaves=15,  # Fewer leaves for smaller depth
-            min_child_samples=5,
-            reg_alpha=0.1,
-            reg_lambda=0.1,
-            subsample=0.8,
-            colsample_bytree=0.8,
-            n_jobs=-1,  # Use all available CPU cores
-            verbose=-1,
-            device='gpu',  # GPU acceleration
-            boost_from_average=True,
-            random_state=42
-        )
-
-        # Train variation model
-        try:
-            var_model.fit(X_train_var, y_train_var)
-            print(f"Trained variation model for {family} with {len(valid_variations)} variations")
-            return family, var_model
-        except Exception as e:
-            print(f"Error training variation model for {family}: {e}")
-            return family, None
+    # Use the module-level train_variation_model function
 
     # Get configuration for parallelization
     config = get_config()
