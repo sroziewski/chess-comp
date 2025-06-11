@@ -1888,15 +1888,19 @@ def predict_hierarchical_opening_tags(df, tag_column='OpeningTags', fen_features
         X_train, y_train_family, test_size=0.2, random_state=42, stratify=y_train_family
     )
 
-    # Train family model on training set
-    family_model.fit(X_train_split, y_train_split)
+    # Train family model on training set with validation data for early stopping
+    family_model.fit(X_train_split, y_train_split, eval_set=[(X_val, y_val)], eval_metric='multi_logloss')
 
     # Evaluate on validation set
     val_accuracy = family_model.score(X_val, y_val)
     logger.info(f"Family prediction accuracy on validation set: {val_accuracy:.4f}")
 
     # Retrain family model on all data with tags for final model
-    family_model.fit(X_train, y_train_family)
+    # Create a small validation set for early stopping (10% of data)
+    X_train_final, X_val_final, y_train_final, y_val_final = train_test_split(
+        X_train, y_train_family, test_size=0.1, random_state=42, stratify=y_train_family
+    )
+    family_model.fit(X_train_final, y_train_final, eval_set=[(X_val_final, y_val_final)], eval_metric='multi_logloss')
 
     # Function to train a variation model for a specific family
     def train_variation_model(family_data):
