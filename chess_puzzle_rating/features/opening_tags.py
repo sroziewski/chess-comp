@@ -1801,7 +1801,7 @@ def process_prediction_chunk(chunk_data):
 
 
 def predict_hierarchical_opening_tags(df, tag_column='OpeningTags', fen_features=None, move_features=None,
-                                      eco_features=None):
+                                      eco_features=None, data_path=None):
     """
     Predict opening tags using a hierarchical approach (family → variation)
     with strengthened ECO code integration.
@@ -1818,6 +1818,8 @@ def predict_hierarchical_opening_tags(df, tag_column='OpeningTags', fen_features
         Pre-computed move features, by default None
     eco_features : pandas.DataFrame, optional
         Pre-computed ECO code features, by default None
+    data_path : str, optional
+        Path to save/load pre-computed features, by default None
 
     Returns
     -------
@@ -1828,22 +1830,73 @@ def predict_hierarchical_opening_tags(df, tag_column='OpeningTags', fen_features
         - combined_features_df: DataFrame with all features used for prediction
     """
     logger = get_logger()
-    logger.info("Predicting opening tags using hierarchical classification with ECO code integration...")
+    logger.info("Predicting opening tags using LGBMClassifier classification with ECO code integration...")
 
-    # Extract features if not provided
-    if fen_features is None:
-        fen_features = extract_fen_features(df)
-    if move_features is None:
-        move_features = extract_opening_move_features(df)
-    if eco_features is None:
-        eco_features = infer_eco_codes(df)
+    # Check if saved data exists and load it if available
+    if data_path is not None:
+        features_path = f"{data_path}_features.npz"
+        eco_mapping_path = f"{data_path}_eco_mapping.pkl"
 
-    # Create ECO code mapping
-    eco_mapping = create_eco_mapping(df, tag_column)
+        if os.path.exists(features_path) and os.path.exists(eco_mapping_path):
+            logger.info(f"Loading pre-computed features from {features_path}")
+            data = np.load(features_path, allow_pickle=True)
+            fen_features = pd.DataFrame(data['fen_features'], index=df.index)
+            move_features = pd.DataFrame(data['move_features'], index=df.index)
+            eco_features = pd.DataFrame(data['eco_features'], index=df.index)
 
-    # Combine all features
-    combined_features = pd.concat([fen_features, move_features, eco_features], axis=1)
-    combined_features = combined_features.fillna(0)  # Fill any NaN values
+            logger.info(f"Loading ECO mapping from {eco_mapping_path}")
+            import pickle
+            with open(eco_mapping_path, 'rb') as f:
+                eco_mapping = pickle.load(f)
+
+            # Combine all features
+            combined_features = pd.concat([fen_features, move_features, eco_features], axis=1)
+            combined_features = combined_features.fillna(0)  # Fill any NaN values
+
+            logger.info("Successfully loaded pre-computed features and ECO mapping")
+        else:
+            # Extract features if not provided or saved data doesn't exist
+            if fen_features is None:
+                fen_features = extract_fen_features(df)
+            if move_features is None:
+                move_features = extract_opening_move_features(df)
+            if eco_features is None:
+                eco_features = infer_eco_codes(df)
+
+            # Create ECO code mapping
+            eco_mapping = create_eco_mapping(df, tag_column)
+
+            # Combine all features
+            combined_features = pd.concat([fen_features, move_features, eco_features], axis=1)
+            combined_features = combined_features.fillna(0)  # Fill any NaN values
+
+            # Save the features and ECO mapping for future use
+            if data_path is not None:
+                logger.info(f"Saving features to {features_path}")
+                np.savez(features_path, 
+                         fen_features=fen_features.values, 
+                         move_features=move_features.values, 
+                         eco_features=eco_features.values)
+
+                logger.info(f"Saving ECO mapping to {eco_mapping_path}")
+                import pickle
+                with open(eco_mapping_path, 'wb') as f:
+                    pickle.dump(eco_mapping, f)
+    else:
+        # Extract features if not provided
+        if fen_features is None:
+            fen_features = extract_fen_features(df)
+        if move_features is None:
+            move_features = extract_opening_move_features(df)
+        if eco_features is None:
+            eco_features = infer_eco_codes(df)
+
+        # Create ECO code mapping
+        eco_mapping = create_eco_mapping(df, tag_column)
+
+        # Combine all features
+        combined_features = pd.concat([fen_features, move_features, eco_features], axis=1)
+        combined_features = combined_features.fillna(0)  # Fill any NaN values
 
     # Identify puzzles with and without tags
     has_tags = ~df[tag_column].isna() & (df[tag_column] != '')
@@ -1893,7 +1946,7 @@ def predict_hierarchical_opening_tags(df, tag_column='OpeningTags', fen_features
 
     # Evaluate on validation set
     val_accuracy = family_model.score(X_val, y_val)
-    logger.info(f"Family prediction accuracy on validation set: {val_accuracy:.4f}")
+    logger.info(f"LGBMClassifier prediction accuracy on validation set: {val_accuracy:.4f}")
 
     # Retrain family model on all data with tags for final model
     # Create a small validation set for early stopping (10% of data)
@@ -1930,9 +1983,23 @@ def predict_hierarchical_opening_tags(df, tag_column='OpeningTags', fen_features
         if len(X_train_var) < 10:
             return family, None
 
-        # Create a simpler model for variation prediction (less data available)
-        var_model = RandomForestClassifier(n_estimators=50, min_samples_leaf=2,
-                                           class_weight='balanced', random_state=42)
+        # Create a LGBMClassifier for variation prediction (less data available)
+        var_model = LGBMClassifier(
+            n_estimators=100,  # Fewer estimators for smaller datasets
+            learning_rate=0.1,
+            max_depth=4,  # Smaller depth for less data
+            num_leaves=15,  # Fewer leaves for smaller depth
+            min_child_samples=5,
+            reg_alpha=0.1,
+            reg_lambda=0.1,
+            subsample=0.8,
+            colsample_bytree=0.8,
+            n_jobs=-1,  # Use all available CPU cores
+            verbose=-1,
+            device='gpu',  # GPU acceleration
+            boost_from_average=True,
+            random_state=42
+        )
 
         # Train variation model
         try:
@@ -2043,7 +2110,7 @@ def predict_hierarchical_opening_tags(df, tag_column='OpeningTags', fen_features
 
 
 def predict_missing_opening_tags(df, tag_column='OpeningTags', fen_features=None, move_features=None,
-                                 eco_features=None):
+                                 eco_features=None, data_path=None):
     """
     Predict missing opening tags using an ensemble approach with hierarchical classification.
 
@@ -2059,6 +2126,8 @@ def predict_missing_opening_tags(df, tag_column='OpeningTags', fen_features=None
         Pre-computed move features, by default None
     eco_features : pandas.DataFrame, optional
         Pre-computed ECO code features, by default None
+    data_path : str, optional
+        Path to save/load pre-computed features, by default None
 
     Returns
     -------
@@ -2089,7 +2158,8 @@ def predict_missing_opening_tags(df, tag_column='OpeningTags', fen_features=None
         tag_column=tag_column,
         fen_features=fen_features,
         move_features=move_features,
-        eco_features=eco_features
+        eco_features=eco_features,
+        data_path=data_path
     )
     logger.info(f"Identify puzzles without tags")
     # Identify puzzles without tags
