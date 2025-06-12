@@ -1736,7 +1736,6 @@ def train_variation_model(family_data):
     # Skip if not enough samples after filtering
     if len(X_train_var) < 10:
         return family, None
-
     # Create a LGBMClassifier for variation prediction (less data available)
     var_model = LGBMClassifier(
         n_estimators=100,  # Fewer estimators for smaller datasets
