@@ -2026,38 +2026,23 @@ def predict_hierarchical_opening_tags(df, tag_column='OpeningTags', fen_features
 
     # Use the module-level train_variation_model function
 
-    # Get configuration for parallelization
-    config = get_config()
-    performance_config = config.get('performance', {})
-    parallel_config = performance_config.get('parallel', {})
+    # Log that we're training variation models sequentially
+    logger.info(f"Training variation models sequentially one by one")
 
-    # Determine the number of worker processes to use
-    n_workers = parallel_config.get('n_workers')
-    if n_workers is None:
-        n_workers = os.cpu_count() or 1
-
-    logger.info(f"Using {n_workers} worker processes for parallel variation model training")
-
-    # Create variation models for each family with sufficient data in parallel
+    # Create variation models for each family with sufficient data one by one
     variation_models = {}
 
-    # Prepare data for parallel processing
+    # Prepare data for sequential processing
     family_data_list = [(family, df_with_tags, combined_features) for family in valid_families]
 
-    # Process families in parallel
-    with concurrent.futures.ProcessPoolExecutor(max_workers=n_workers) as executor:
-        # Submit all tasks and collect futures
-        futures = [executor.submit(train_variation_model, family_data) for family_data in family_data_list]
-
-        # Process results as they complete
-        for future in tqdm(concurrent.futures.as_completed(futures), total=len(futures),
-                           desc="Training variation models"):
-            try:
-                family, model = future.result()
-                if model is not None:
-                    variation_models[family] = model
-            except Exception as e:
-                logger.error(f"Error in variation model training: {e}")
+    # Process families one by one
+    for family_data in tqdm(family_data_list, desc="Training variation models"):
+        try:
+            family, model = train_variation_model(family_data)
+            if model is not None:
+                variation_models[family] = model
+        except Exception as e:
+            logger.error(f"Error in variation model training: {e}")
 
     # Store all models in a dictionary
     models_dict = {
