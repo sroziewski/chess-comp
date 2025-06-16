@@ -2084,20 +2084,14 @@ def predict_hierarchical_opening_tags(df, tag_column='OpeningTags', fen_features
         chunks.append(
             (chunk_df, family_model, variation_models, chunk_X, eco_features, eco_family_map, eco_variation_map))
 
-    # Process chunks in parallel
+    # Process chunks sequentially instead of in parallel to avoid stalling
     results = []
-    with concurrent.futures.ProcessPoolExecutor(max_workers=n_workers) as executor:
-        # Submit all tasks and collect futures
-        futures = [executor.submit(process_prediction_chunk, chunk) for chunk in chunks]
-
-        # Process results as they complete
-        for future in tqdm(concurrent.futures.as_completed(futures), total=len(futures),
-                           desc="Processing prediction chunks"):
-            try:
-                chunk_result = future.result()
-                results.append(chunk_result)
-            except Exception as e:
-                logger.error(f"Error processing prediction chunk: {e}")
+    for chunk in tqdm(chunks, desc="Processing prediction chunks"):
+        try:
+            chunk_result = process_prediction_chunk(chunk)
+            results.append(chunk_result)
+        except Exception as e:
+            logger.error(f"Error processing prediction chunk: {e}")
 
     # Combine results from all chunks
     if results:
