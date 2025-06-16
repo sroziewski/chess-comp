@@ -402,12 +402,18 @@ def engineer_chess_opening_features(df, tag_column='OpeningTags',
     }
 
     # Create ECO code features
+    eco_features = {}
     for eco, patterns in eco_patterns.items():
         pattern_cols = [col for col in openings_df.columns if col.startswith('open_fam_') and
                        any(pattern in col.lower() for pattern in patterns)]
 
         if pattern_cols:
-            openings_df[f'eco_{eco}'] = openings_df[pattern_cols].max(axis=1)
+            eco_features[f'eco_{eco}'] = openings_df[pattern_cols].max(axis=1)
+
+    # Add all ECO features at once if any exist
+    if eco_features:
+        eco_df = pd.DataFrame(eco_features, index=openings_df.index)
+        openings_df = pd.concat([openings_df, eco_df], axis=1)
 
     # --- Add Strategic Characteristic Features ---
     strategic_patterns = {
@@ -420,10 +426,16 @@ def engineer_chess_opening_features(df, tag_column='OpeningTags',
     }
 
     # Create strategic features
+    style_features = {}
     for style, patterns in strategic_patterns.items():
         pattern_cols = [col for col in openings_df.columns if any(pattern in col.lower() for pattern in patterns)]
         if pattern_cols:
-            openings_df[f'style_{style}'] = openings_df[pattern_cols].max(axis=1)
+            style_features[f'style_{style}'] = openings_df[pattern_cols].max(axis=1)
+
+    # Add all style features at once if any exist
+    if style_features:
+        style_df = pd.DataFrame(style_features, index=openings_df.index)
+        openings_df = pd.concat([openings_df, style_df], axis=1)
 
     # --- Add First Move Pattern Features ---
     first_move_patterns = {
@@ -442,10 +454,16 @@ def engineer_chess_opening_features(df, tag_column='OpeningTags',
     }
 
     # Create first move features
+    move_features = {}
     for move_seq, patterns in first_move_patterns.items():
         pattern_cols = [col for col in openings_df.columns if any(pattern in col.lower() for pattern in patterns)]
         if pattern_cols:
-            openings_df[f'move_{move_seq}'] = openings_df[pattern_cols].max(axis=1)
+            move_features[f'move_{move_seq}'] = openings_df[pattern_cols].max(axis=1)
+
+    # Add all move features at once if any exist
+    if move_features:
+        move_df = pd.DataFrame(move_features, index=openings_df.index)
+        openings_df = pd.concat([openings_df, move_df], axis=1)
 
     # --- TF-IDF and SVD Features ---
     # Only proceed if we have enough puzzles with opening tags
@@ -524,11 +542,17 @@ def engineer_chess_opening_features(df, tag_column='OpeningTags',
     # --- Handle the imbalance between puzzles with and without tags ---
     # Create features to interact with other puzzle attributes
     if additional_columns is not None and len(additional_columns) > 0:
+        interaction_features = {}
         for col in additional_columns:
             if col in df_copy.columns:
                 # Interaction features: separate signal from puzzles with/without tags
-                openings_df[f'no_tag_{col}'] = (1 - openings_df['has_opening_tags']) * df_copy[col]
-                openings_df[f'with_tag_{col}'] = openings_df['has_opening_tags'] * df_copy[col]
+                interaction_features[f'no_tag_{col}'] = (1 - openings_df['has_opening_tags']) * df_copy[col]
+                interaction_features[f'with_tag_{col}'] = openings_df['has_opening_tags'] * df_copy[col]
+
+        # Add all interaction features at once if any exist
+        if interaction_features:
+            interaction_df = pd.DataFrame(interaction_features, index=openings_df.index)
+            openings_df = pd.concat([openings_df, interaction_df], axis=1)
 
     # --- Topic Modeling with LDA ---
     # Only proceed if we have enough puzzles with opening tags
@@ -577,12 +601,18 @@ def engineer_chess_opening_features(df, tag_column='OpeningTags',
         'pawn_chain': ['french', 'kings_indian'],
     }
 
+    structure_features = {}
     for structure, patterns in pawn_structures.items():
         pattern_cols = [col for col in openings_df.columns if
                        any(any(pattern in part for part in col.lower().split('_'))
                           for pattern in patterns)]
         if pattern_cols:
-            openings_df[f'structure_{structure}'] = openings_df[pattern_cols].max(axis=1)
+            structure_features[f'structure_{structure}'] = openings_df[pattern_cols].max(axis=1)
+
+    # Add all structure features at once if any exist
+    if structure_features:
+        structure_df = pd.DataFrame(structure_features, index=openings_df.index)
+        openings_df = pd.concat([openings_df, structure_df], axis=1)
 
     # --- Final cleaning and normalization ---
     # Fill NaNs that might have been introduced
