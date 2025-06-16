@@ -14,6 +14,62 @@ import concurrent.futures
 
 log = logging.getLogger(__name__)
 
+# Helper function for parsing themes
+def parse_theme(item):
+    idx, theme_string = item
+    local_counter = Counter()
+
+    if pd.isna(theme_string) or not theme_string.strip():
+        themes_list = []
+    else:
+        # Split by spaces to handle multiple themes
+        themes_list = theme_string.split()
+
+        # Count each theme
+        for theme in themes_list:
+            local_counter[theme] += 1
+
+    return {
+        'idx': idx, 
+        'themes': themes_list, 
+        'counter': local_counter,
+        'svd_text': ' '.join(themes_list)
+    }
+
+# Helper function for processing entries
+def process_entry(entry, top_themes):
+    idx = entry['idx']
+    themes_list = entry['themes']
+
+    # Basic features
+    current_features = {
+        'theme_count': len(themes_list),
+        'has_themes': 1 if themes_list else 0
+    }
+
+    # One-hot encoding for top themes
+    theme_set = set(themes_list)
+    for theme in top_themes:
+        current_features[f'theme_{theme}'] = 1 if theme in theme_set else 0
+
+    # Add strategic theme categories
+    current_features['is_mate'] = 1 if any('mate' in theme.lower() for theme in themes_list) else 0
+    current_features['is_fork'] = 1 if 'fork' in theme_set else 0
+    current_features['is_pin'] = 1 if 'pin' in theme_set else 0
+    current_features['is_skewer'] = 1 if 'skewer' in theme_set else 0
+    current_features['is_discovery'] = 1 if 'discoveredAttack' in theme_set else 0
+    current_features['is_sacrifice'] = 1 if 'sacrifice' in theme_set else 0
+    current_features['is_promotion'] = 1 if 'promotion' in theme_set else 0
+    current_features['is_endgame'] = 1 if 'endgame' in theme_set else 0
+    current_features['is_middlegame'] = 1 if 'middlegame' in theme_set else 0
+    current_features['is_opening'] = 1 if 'opening' in theme_set else 0
+
+    return {'idx': idx, **current_features}
+
+# Helper function to handle multiple arguments for process_entry
+def process_entry_with_themes(entry, top_themes):
+    return process_entry(entry, top_themes)
+
 def engineer_chess_theme_features(df, theme_column='Themes',
                                  min_theme_freq=10,
                                  max_themes=100,
@@ -58,28 +114,6 @@ def engineer_chess_theme_features(df, theme_column='Themes',
     # Fill missing values with empty string
     df_copy[theme_column] = df_copy[theme_column].fillna('')
 
-    # --- Helper function for parsing themes ---
-    def parse_theme(item):
-        idx, theme_string = item
-        local_counter = Counter()
-
-        if pd.isna(theme_string) or not theme_string.strip():
-            themes_list = []
-        else:
-            # Split by spaces to handle multiple themes
-            themes_list = theme_string.split()
-
-            # Count each theme
-            for theme in themes_list:
-                local_counter[theme] += 1
-
-        return {
-            'idx': idx, 
-            'themes': themes_list, 
-            'counter': local_counter,
-            'svd_text': ' '.join(themes_list)
-        }
-
     # --- Pre-computation: Parse all themes and gather statistics in parallel ---
     log.info("Parsing themes in parallel...")
     items = list(df_copy[theme_column].items())
@@ -106,46 +140,12 @@ def engineer_chess_theme_features(df, theme_column='Themes',
 
     log.info(f"Selected {len(top_themes)} themes for one-hot encoding")
 
-    # --- Helper function for parallel processing ---
-    def process_entry(entry, top_themes):
-        idx = entry['idx']
-        themes_list = entry['themes']
-
-        # Basic features
-        current_features = {
-            'theme_count': len(themes_list),
-            'has_themes': 1 if themes_list else 0
-        }
-
-        # One-hot encoding for top themes
-        theme_set = set(themes_list)
-        for theme in top_themes:
-            current_features[f'theme_{theme}'] = 1 if theme in theme_set else 0
-
-        # Add strategic theme categories
-        current_features['is_mate'] = 1 if any('mate' in theme.lower() for theme in themes_list) else 0
-        current_features['is_fork'] = 1 if 'fork' in theme_set else 0
-        current_features['is_pin'] = 1 if 'pin' in theme_set else 0
-        current_features['is_skewer'] = 1 if 'skewer' in theme_set else 0
-        current_features['is_discovery'] = 1 if 'discoveredAttack' in theme_set else 0
-        current_features['is_sacrifice'] = 1 if 'sacrifice' in theme_set else 0
-        current_features['is_promotion'] = 1 if 'promotion' in theme_set else 0
-        current_features['is_endgame'] = 1 if 'endgame' in theme_set else 0
-        current_features['is_middlegame'] = 1 if 'middlegame' in theme_set else 0
-        current_features['is_opening'] = 1 if 'opening' in theme_set else 0
-
-        return {'idx': idx, **current_features}
-
-    # --- Feature Generation Loop with Parallel Processing ---
+    # --- Feature Generation with Parallel Processing ---
     log.info("Generating features in parallel...")
-
-    # Helper function to handle multiple arguments for process_entry
-    def process_entry_with_themes(entry):
-        return process_entry(entry, top_themes)
 
     with concurrent.futures.ProcessPoolExecutor() as executor:
         features_list = list(tqdm(
-            executor.map(process_entry_with_themes, all_themes_info),
+            executor.map(lambda entry: process_entry_with_themes(entry, top_themes), all_themes_info),
             total=len(all_themes_info),
             desc="Generating Features"
         ))
