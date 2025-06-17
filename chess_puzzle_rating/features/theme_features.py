@@ -27,15 +27,15 @@ def parse_theme(item):
         # Split by spaces to handle multiple themes
         themes_list = theme_string.split()
 
-        # Count each theme
+        # Count each theme - use lowercase for consistent counting
         for theme in themes_list:
-            local_counter[theme] += 1
+            local_counter[theme.lower()] += 1
 
     return {
         'idx': idx, 
-        'themes': themes_list, 
-        'counter': local_counter,
-        'svd_text': ' '.join(themes_list)
+        'themes': themes_list,  # Keep original case for themes_list
+        'counter': local_counter,  # Counter uses lowercase themes
+        'svd_text': ' '.join(themes_list)  # Original case preserved for later lowercase conversion
     }
 
 # Helper function for processing entries
@@ -49,17 +49,17 @@ def process_entry(entry, top_themes):
         'has_themes': 1 if themes_list else 0
     }
 
-    # One-hot encoding for top themes
-    theme_set = set(themes_list)
-    for theme in top_themes:
+    # One-hot encoding for top themes - convert themes_list to lowercase for comparison
+    theme_set = set(theme.lower() for theme in themes_list)
+    for theme in top_themes:  # top_themes are already lowercase
         current_features[f'theme_{theme}'] = 1 if theme in theme_set else 0
 
-    # Add strategic theme categories
+    # Add strategic theme categories - use lowercase for all theme comparisons
     current_features['is_mate'] = 1 if any('mate' in theme.lower() for theme in themes_list) else 0
     current_features['is_fork'] = 1 if 'fork' in theme_set else 0
     current_features['is_pin'] = 1 if 'pin' in theme_set else 0
     current_features['is_skewer'] = 1 if 'skewer' in theme_set else 0
-    current_features['is_discovery'] = 1 if 'discoveredAttack' in theme_set else 0
+    current_features['is_discovery'] = 1 if 'discoveredattack' in theme_set else 0  # lowercase
     current_features['is_sacrifice'] = 1 if 'sacrifice' in theme_set else 0
     current_features['is_promotion'] = 1 if 'promotion' in theme_set else 0
     current_features['is_endgame'] = 1 if 'endgame' in theme_set else 0
@@ -180,7 +180,8 @@ def engineer_chess_theme_features(df, theme_column='Themes',
         all_themes_for_svd.append(result['svd_text'])
 
     # --- Select Top N for One-Hot Encoding ---
-    top_themes = [theme for theme, count in all_themes_counter.most_common(max_themes)
+    # Convert all themes to lowercase to ensure consistency with vectorizers
+    top_themes = [theme.lower() for theme, count in all_themes_counter.most_common(max_themes)
                  if count >= min_theme_freq]
 
     log.info(f"Selected {len(top_themes)} themes for one-hot encoding")
@@ -243,11 +244,11 @@ def engineer_chess_theme_features(df, theme_column='Themes',
     has_themes_mask = themes_df['has_themes'] == 1
     if has_themes_mask.sum() > 100 and n_svd_components > 0:
         try:
-            # Process themes for better semantic representation
-            processed_themes = [theme.replace('_', ' ') for theme in all_themes_for_svd]
+            # Process themes for better semantic representation - ensure all are lowercase
+            processed_themes = [theme.replace('_', ' ').lower() for theme in all_themes_for_svd]
 
-            # TF-IDF on themes
-            theme_vectorizer = TfidfVectorizer(min_df=3, max_features=1000)
+            # TF-IDF on themes - explicitly set lowercase=True
+            theme_vectorizer = TfidfVectorizer(min_df=3, max_features=1000, lowercase=True)
             theme_matrix = theme_vectorizer.fit_transform(processed_themes)
 
             n_comp = min(n_svd_components, theme_matrix.shape[1] - 1, theme_matrix.shape[0] - 1)
@@ -268,10 +269,10 @@ def engineer_chess_theme_features(df, theme_column='Themes',
     # --- Hashing Features for High-Cardinality ---
     if n_hash_features > 0:
         try:
-            # Process themes for hashing
-            processed_themes = [theme if theme else '' for theme in all_themes_for_svd]
+            # Process themes for hashing - ensure all are lowercase to avoid warnings
+            processed_themes = [theme.lower() if theme else '' for theme in all_themes_for_svd]
 
-            hasher = HashingVectorizer(n_features=n_hash_features, alternate_sign=False)
+            hasher = HashingVectorizer(n_features=n_hash_features, alternate_sign=False, lowercase=True)
             hash_features = hasher.fit_transform(processed_themes).toarray()
 
             hash_df = pd.DataFrame(
@@ -288,9 +289,9 @@ def engineer_chess_theme_features(df, theme_column='Themes',
     # Only proceed if we have enough puzzles with themes
     if has_themes_mask.sum() > 100 and len(top_themes) > 10:
         try:
-            # Create document-term matrix for themes
-            count_vec = CountVectorizer(vocabulary=top_themes)
-            dtm = count_vec.fit_transform(all_themes_for_svd)
+            # Create document-term matrix for themes - explicitly set lowercase=True
+            count_vec = CountVectorizer(vocabulary=top_themes, lowercase=True)
+            dtm = count_vec.fit_transform([theme.lower() for theme in all_themes_for_svd])
 
             # Apply LDA
             lda = LatentDirichletAllocation(n_components=8, random_state=42)
