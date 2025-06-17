@@ -126,7 +126,7 @@ def engineer_chess_theme_features(df, theme_column='Themes',
     log.info(f"Using {max_workers} workers for parallel theme parsing")
 
     # Process in larger chunks to improve performance
-    chunk_size = 4559235
+    chunk_size = 2000000
     total_items = len(items)
 
     for chunk_start in range(0, total_items, chunk_size):
