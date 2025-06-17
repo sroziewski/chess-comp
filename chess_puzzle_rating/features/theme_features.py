@@ -11,6 +11,7 @@ import re
 from tqdm import tqdm
 import logging
 import concurrent.futures
+import os
 
 log = logging.getLogger(__name__)
 
@@ -118,15 +119,28 @@ def engineer_chess_theme_features(df, theme_column='Themes',
     log.info("Parsing themes in parallel...")
     items = list(df_copy[theme_column].items())
 
-    # Use a more reliable approach for parallel processing
+    # Use a more reliable approach for parallel processing with limited workers and chunking
     parsed_results = []
-    with concurrent.futures.ProcessPoolExecutor() as executor:
-        # Submit all tasks
-        futures = [executor.submit(parse_theme, item) for item in items]
+    # Get CPU count and limit workers to avoid resource exhaustion
+    max_workers = min(os.cpu_count() or 4, 8)  # Limit to 8 workers max
+    log.info(f"Using {max_workers} workers for parallel theme parsing")
 
-        # Process results as they complete
-        for future in tqdm(concurrent.futures.as_completed(futures), total=len(futures), desc="Parsing Themes"):
-            parsed_results.append(future.result())
+    # Process in smaller chunks to avoid memory issues
+    chunk_size = 10000
+    total_items = len(items)
+
+    for chunk_start in range(0, total_items, chunk_size):
+        chunk_end = min(chunk_start + chunk_size, total_items)
+        chunk_items = items[chunk_start:chunk_end]
+        log.info(f"Processing chunk {chunk_start//chunk_size + 1}/{(total_items + chunk_size - 1)//chunk_size} ({len(chunk_items)} items)")
+
+        with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as executor:
+            # Submit tasks for this chunk
+            futures = [executor.submit(parse_theme, item) for item in chunk_items]
+
+            # Process results as they complete
+            for future in tqdm(concurrent.futures.as_completed(futures), total=len(futures), desc=f"Parsing Themes (Chunk {chunk_start//chunk_size + 1})"):
+                parsed_results.append(future.result())
 
     # Combine results
     all_themes_info = []
@@ -147,15 +161,28 @@ def engineer_chess_theme_features(df, theme_column='Themes',
     # --- Feature Generation with Parallel Processing ---
     log.info("Generating features in parallel...")
 
-    # Use a more reliable approach for parallel processing
+    # Use a more reliable approach for parallel processing with limited workers and chunking
     features_list = []
-    with concurrent.futures.ProcessPoolExecutor() as executor:
-        # Submit all tasks
-        futures = [executor.submit(process_entry_with_themes, entry, top_themes) for entry in all_themes_info]
+    # Get CPU count and limit workers to avoid resource exhaustion
+    max_workers = min(os.cpu_count() or 4, 8)  # Limit to 8 workers max
+    log.info(f"Using {max_workers} workers for parallel feature generation")
 
-        # Process results as they complete
-        for future in tqdm(concurrent.futures.as_completed(futures), total=len(futures), desc="Generating Features"):
-            features_list.append(future.result())
+    # Process in smaller chunks to avoid memory issues
+    chunk_size = 10000
+    total_entries = len(all_themes_info)
+
+    for chunk_start in range(0, total_entries, chunk_size):
+        chunk_end = min(chunk_start + chunk_size, total_entries)
+        chunk_entries = all_themes_info[chunk_start:chunk_end]
+        log.info(f"Processing chunk {chunk_start//chunk_size + 1}/{(total_entries + chunk_size - 1)//chunk_size} ({len(chunk_entries)} entries)")
+
+        with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as executor:
+            # Submit tasks for this chunk
+            futures = [executor.submit(process_entry_with_themes, entry, top_themes) for entry in chunk_entries]
+
+            # Process results as they complete
+            for future in tqdm(concurrent.futures.as_completed(futures), total=len(futures), desc=f"Generating Features (Chunk {chunk_start//chunk_size + 1})"):
+                features_list.append(future.result())
 
     # Create DataFrame from features list
     themes_df = pd.DataFrame(features_list).set_index('idx')
