@@ -121,12 +121,12 @@ def engineer_chess_theme_features(df, theme_column='Themes',
 
     # Use a more reliable approach for parallel processing with limited workers and chunking
     parsed_results = []
-    # Get CPU count and limit workers to avoid resource exhaustion
-    max_workers = min(os.cpu_count() or 4, 8)  # Limit to 8 workers max
+    # Use exactly 4 workers as specified
+    max_workers = 4
     log.info(f"Using {max_workers} workers for parallel theme parsing")
 
-    # Process in smaller chunks to avoid memory issues
-    chunk_size = 10000
+    # Process in larger chunks to improve performance
+    chunk_size = 100000
     total_items = len(items)
 
     for chunk_start in range(0, total_items, chunk_size):
@@ -134,7 +134,7 @@ def engineer_chess_theme_features(df, theme_column='Themes',
         chunk_items = items[chunk_start:chunk_end]
         log.info(f"Processing chunk {chunk_start//chunk_size + 1}/{(total_items + chunk_size - 1)//chunk_size} ({len(chunk_items)} items)")
 
-        with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as executor:
+        with concurrent.futures.ProcessPoolExecutor(max_workers=4) as executor:
             # Submit tasks for this chunk
             futures = [executor.submit(parse_theme, item) for item in chunk_items]
 
@@ -163,12 +163,12 @@ def engineer_chess_theme_features(df, theme_column='Themes',
 
     # Use a more reliable approach for parallel processing with limited workers and chunking
     features_list = []
-    # Get CPU count and limit workers to avoid resource exhaustion
-    max_workers = min(os.cpu_count() or 4, 8)  # Limit to 8 workers max
+    # Use exactly 4 workers as specified
+    max_workers = 4
     log.info(f"Using {max_workers} workers for parallel feature generation")
 
-    # Process in smaller chunks to avoid memory issues
-    chunk_size = 10000
+    # Process in larger chunks to improve performance
+    chunk_size = 100000
     total_entries = len(all_themes_info)
 
     for chunk_start in range(0, total_entries, chunk_size):
@@ -176,7 +176,7 @@ def engineer_chess_theme_features(df, theme_column='Themes',
         chunk_entries = all_themes_info[chunk_start:chunk_end]
         log.info(f"Processing chunk {chunk_start//chunk_size + 1}/{(total_entries + chunk_size - 1)//chunk_size} ({len(chunk_entries)} entries)")
 
-        with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as executor:
+        with concurrent.futures.ProcessPoolExecutor(max_workers=4) as executor:
             # Submit tasks for this chunk
             futures = [executor.submit(process_entry_with_themes, entry, top_themes) for entry in chunk_entries]
 
