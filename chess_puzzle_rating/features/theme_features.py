@@ -117,12 +117,16 @@ def engineer_chess_theme_features(df, theme_column='Themes',
     # --- Pre-computation: Parse all themes and gather statistics in parallel ---
     log.info("Parsing themes in parallel...")
     items = list(df_copy[theme_column].items())
+
+    # Use a more reliable approach for parallel processing
+    parsed_results = []
     with concurrent.futures.ProcessPoolExecutor() as executor:
-        parsed_results = list(tqdm(
-            executor.map(parse_theme, items),
-            total=len(items),
-            desc="Parsing Themes"
-        ))
+        # Submit all tasks
+        futures = [executor.submit(parse_theme, item) for item in items]
+
+        # Process results as they complete
+        for future in tqdm(concurrent.futures.as_completed(futures), total=len(futures), desc="Parsing Themes"):
+            parsed_results.append(future.result())
 
     # Combine results
     all_themes_info = []
@@ -143,12 +147,15 @@ def engineer_chess_theme_features(df, theme_column='Themes',
     # --- Feature Generation with Parallel Processing ---
     log.info("Generating features in parallel...")
 
+    # Use a more reliable approach for parallel processing
+    features_list = []
     with concurrent.futures.ProcessPoolExecutor() as executor:
-        features_list = list(tqdm(
-            executor.map(lambda entry: process_entry_with_themes(entry, top_themes), all_themes_info),
-            total=len(all_themes_info),
-            desc="Generating Features"
-        ))
+        # Submit all tasks
+        futures = [executor.submit(process_entry_with_themes, entry, top_themes) for entry in all_themes_info]
+
+        # Process results as they complete
+        for future in tqdm(concurrent.futures.as_completed(futures), total=len(futures), desc="Generating Features"):
+            features_list.append(future.result())
 
     # Create DataFrame from features list
     themes_df = pd.DataFrame(features_list).set_index('idx')
