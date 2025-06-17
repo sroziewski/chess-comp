@@ -130,6 +130,13 @@ def extract_theme_features(df, theme_column='Themes', min_theme_freq=5, max_them
 
     # Save features if output file is specified
     if output_file:
+        # Check if output_file is a directory
+        if os.path.isdir(output_file) or output_file.endswith('/') or output_file.endswith('\\'):
+            # If it's a directory, create a default filename within that directory
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            output_file = os.path.join(output_file, f"theme_features_{timestamp}.csv")
+            logger.info(f"Output path is a directory, using file: {output_file}")
+
         # Create directory if it doesn't exist
         output_dir = os.path.dirname(output_file)
         if output_dir and not os.path.exists(output_dir):
