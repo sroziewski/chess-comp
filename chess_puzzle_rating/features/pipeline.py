@@ -146,12 +146,17 @@ def save_dataframe(df, step_name, data_dir):
     step_dir = os.path.join(data_dir, step_name)
     os.makedirs(step_dir, exist_ok=True)
 
-    # Create file paths
-    csv_path = os.path.join(step_dir, f"{df_hash}.csv")
-    metadata_path = os.path.join(step_dir, f"{df_hash}.json")
+    # Create file paths with fixed names for each step
+    fixed_csv_path = os.path.join(step_dir, f"{step_name}_latest.csv")
+    fixed_metadata_path = os.path.join(step_dir, f"{step_name}_latest.json")
 
-    # Save the dataframe
-    df.to_csv(csv_path, index=True)
+    # Also create hash-based paths for backward compatibility
+    hash_csv_path = os.path.join(step_dir, f"{df_hash}.csv")
+    hash_metadata_path = os.path.join(step_dir, f"{df_hash}.json")
+
+    # Save the dataframe to both locations
+    df.to_csv(fixed_csv_path, index=True)
+    df.to_csv(hash_csv_path, index=True)
 
     # Save metadata
     metadata = {
@@ -161,12 +166,15 @@ def save_dataframe(df, step_name, data_dir):
         'hash': df_hash
     }
 
-    with open(metadata_path, 'w') as f:
+    with open(fixed_metadata_path, 'w') as f:
         json.dump(metadata, f, indent=2)
 
-    logger.info(f"Saved {step_name} dataframe to {csv_path} (shape: {df.shape})")
+    with open(hash_metadata_path, 'w') as f:
+        json.dump(metadata, f, indent=2)
 
-    return csv_path
+    logger.info(f"Saved {step_name} dataframe to {fixed_csv_path} and {hash_csv_path} (shape: {df.shape})")
+
+    return fixed_csv_path
 
 
 def load_dataframe(step_name, data_dir, df_hash=None):
@@ -180,7 +188,7 @@ def load_dataframe(step_name, data_dir, df_hash=None):
     data_dir : str
         The directory to load the dataframe from
     df_hash : str, optional
-        The hash of the dataframe to load. If None, loads the most recent dataframe.
+        The hash of the dataframe to load. If None, loads the latest dataframe.
 
     Returns
     -------
@@ -206,8 +214,15 @@ def load_dataframe(step_name, data_dir, df_hash=None):
             logger.info(f"No cached data found for {step_name} with hash {df_hash}")
             return None
 
-    # Otherwise, find the most recent dataframe
-    csv_files = [f for f in os.listdir(step_dir) if f.endswith('.csv')]
+    # First, check if the fixed filename exists
+    fixed_csv_path = os.path.join(step_dir, f"{step_name}_latest.csv")
+    if os.path.exists(fixed_csv_path):
+        df = pd.read_csv(fixed_csv_path, index_col=0)
+        logger.info(f"Loaded {step_name} dataframe from fixed path {fixed_csv_path} (shape: {df.shape})")
+        return df
+
+    # If fixed filename doesn't exist, fall back to finding the most recent hash-based file
+    csv_files = [f for f in os.listdir(step_dir) if f.endswith('.csv') and not f.endswith('_latest.csv')]
 
     if not csv_files:
         logger.info(f"No cached data found for {step_name}")
@@ -219,7 +234,7 @@ def load_dataframe(step_name, data_dir, df_hash=None):
 
     # Load the dataframe
     df = pd.read_csv(csv_path, index_col=0)
-    logger.info(f"Loaded {step_name} dataframe from {csv_path} (shape: {df.shape})")
+    logger.info(f"Loaded {step_name} dataframe from hash-based path {csv_path} (shape: {df.shape})")
 
     return df
 
