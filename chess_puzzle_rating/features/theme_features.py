@@ -12,6 +12,7 @@ from tqdm import tqdm
 import logging
 import concurrent.futures
 import os
+from chess_puzzle_rating.utils.progress import ProgressTracker
 
 log = logging.getLogger(__name__)
 
@@ -125,22 +126,48 @@ def engineer_chess_theme_features(df, theme_column='Themes',
     max_workers = 4
     log.info(f"Using {max_workers} workers for parallel theme parsing")
 
-    # Process in larger chunks to improve performance
-    chunk_size = 4559235
+    # Process in smaller chunks to improve performance and prevent stalling
+
+    # Use a more reasonable chunk size (100,000 items per chunk)
+    chunk_size = 100000
     total_items = len(items)
+    total_chunks = (total_items + chunk_size - 1) // chunk_size
+
+    log.info(f"Processing {total_items} items in {total_chunks} chunks of {chunk_size} items each")
 
     for chunk_start in range(0, total_items, chunk_size):
         chunk_end = min(chunk_start + chunk_size, total_items)
         chunk_items = items[chunk_start:chunk_end]
-        log.info(f"Processing chunk {chunk_start//chunk_size + 1}/{(total_items + chunk_size - 1)//chunk_size} ({len(chunk_items)} items)")
+        chunk_num = chunk_start // chunk_size + 1
 
-        with concurrent.futures.ProcessPoolExecutor(max_workers=4) as executor:
-            # Submit tasks for this chunk
-            futures = [executor.submit(parse_theme, item) for item in chunk_items]
+        log.info(f"Processing chunk {chunk_num}/{total_chunks} ({len(chunk_items)} items)")
 
-            # Process results as they complete
-            for future in tqdm(concurrent.futures.as_completed(futures), total=len(futures), desc=f"Parsing Themes (Chunk {chunk_start//chunk_size + 1})"):
-                parsed_results.append(future.result())
+        # Create a progress tracker for this chunk
+        tracker = ProgressTracker(
+            total=len(chunk_items),
+            description=f"Parsing Themes (Chunk {chunk_num}/{total_chunks})",
+            logger=log,
+            log_interval=5  # Log progress every 5%
+        )
+
+        # Process items in smaller batches to avoid memory issues
+        batch_size = 10000  # Process 10,000 items at a time
+
+        for batch_start in range(0, len(chunk_items), batch_size):
+            batch_end = min(batch_start + batch_size, len(chunk_items))
+            batch_items = chunk_items[batch_start:batch_end]
+
+            with concurrent.futures.ProcessPoolExecutor(max_workers=4) as executor:
+                # Submit tasks for this batch
+                futures = [executor.submit(parse_theme, item) for item in batch_items]
+
+                # Process results as they complete
+                for future in concurrent.futures.as_completed(futures):
+                    parsed_results.append(future.result())
+                    tracker.update()
+
+        # Finish tracking for this chunk
+        tracker.finish()
 
     # Combine results
     all_themes_info = []
@@ -167,22 +194,46 @@ def engineer_chess_theme_features(df, theme_column='Themes',
     max_workers = 4
     log.info(f"Using {max_workers} workers for parallel feature generation")
 
-    # Process in larger chunks to improve performance
+    # Process in reasonable chunks to improve performance and prevent stalling
     chunk_size = 100000
     total_entries = len(all_themes_info)
+    total_chunks = (total_entries + chunk_size - 1) // chunk_size
+
+    log.info(f"Processing {total_entries} entries in {total_chunks} chunks of {chunk_size} entries each")
 
     for chunk_start in range(0, total_entries, chunk_size):
         chunk_end = min(chunk_start + chunk_size, total_entries)
         chunk_entries = all_themes_info[chunk_start:chunk_end]
-        log.info(f"Processing chunk {chunk_start//chunk_size + 1}/{(total_entries + chunk_size - 1)//chunk_size} ({len(chunk_entries)} entries)")
+        chunk_num = chunk_start // chunk_size + 1
 
-        with concurrent.futures.ProcessPoolExecutor(max_workers=4) as executor:
-            # Submit tasks for this chunk
-            futures = [executor.submit(process_entry_with_themes, entry, top_themes) for entry in chunk_entries]
+        log.info(f"Processing chunk {chunk_num}/{total_chunks} ({len(chunk_entries)} entries)")
 
-            # Process results as they complete
-            for future in tqdm(concurrent.futures.as_completed(futures), total=len(futures), desc=f"Generating Features (Chunk {chunk_start//chunk_size + 1})"):
-                features_list.append(future.result())
+        # Create a progress tracker for this chunk
+        tracker = ProgressTracker(
+            total=len(chunk_entries),
+            description=f"Generating Features (Chunk {chunk_num}/{total_chunks})",
+            logger=log,
+            log_interval=5  # Log progress every 5%
+        )
+
+        # Process entries in smaller batches to avoid memory issues
+        batch_size = 10000  # Process 10,000 entries at a time
+
+        for batch_start in range(0, len(chunk_entries), batch_size):
+            batch_end = min(batch_start + batch_size, len(chunk_entries))
+            batch_entries = chunk_entries[batch_start:batch_end]
+
+            with concurrent.futures.ProcessPoolExecutor(max_workers=4) as executor:
+                # Submit tasks for this batch
+                futures = [executor.submit(process_entry_with_themes, entry, top_themes) for entry in batch_entries]
+
+                # Process results as they complete
+                for future in concurrent.futures.as_completed(futures):
+                    features_list.append(future.result())
+                    tracker.update()
+
+        # Finish tracking for this chunk
+        tracker.finish()
 
     # Create DataFrame from features list
     themes_df = pd.DataFrame(features_list).set_index('idx')
