@@ -121,8 +121,8 @@ def main():
     # Merge the dataframes
     logger.info("Merging final features with combined features")
     try:
-        # Use outer join to keep all rows from both dataframes
-        merged_features = pd.concat([final_features, combined_features], axis=1)
+        # Use inner join to ensure the number of rows stays the same
+        merged_features = pd.concat([final_features, combined_features], axis=1, join='inner')
         logger.info(f"Merged features shape: {merged_features.shape}")
 
         # Check for missing values after merge
