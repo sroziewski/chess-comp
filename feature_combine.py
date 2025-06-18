@@ -45,7 +45,7 @@ def main():
     parser.add_argument('--output', type=str, default='features_combined.csv', help='Path to the output file')
     parser.add_argument('--eng-features', type=str, default='eng_features.csv', help='Path to the engineered features file')
     parser.add_argument('--original-data', type=str, default='train_probe.csv', help='Path to the original data file')
-    parser.add_argument('--test-data', type=str, default='/raid/sroziewski/chess/testing_data_cropped.csv', help='Path to the test data file')
+    parser.add_argument('--test-data', type=str, default='testing_data_cropped.csv', help='Path to the test data file')
     args = parser.parse_args()
 
     output_path = args.output
@@ -116,56 +116,46 @@ def main():
     # Reset index of engineered features to get numeric index as a column
     final_features_reset = final_features.reset_index()
 
-    # Create a new column in final_features with PuzzleId from combined_original_features
-    # We'll map the numeric index to the corresponding PuzzleId
-    # Since both DataFrames have the same number of rows and are in the same order,
-    # we can use the row position to map between them
-    if len(final_features_reset) == len(combined_original_features):
-        logger.info("Both datasets have the same number of rows, creating mapping based on row position")
-        final_features_reset['PuzzleId'] = combined_original_features['PuzzleId'].values
-    else:
-        logger.warning(f"Datasets have different number of rows: {len(final_features_reset)} vs {len(combined_original_features)}")
-        # If datasets have different number of rows, we'll use a subset of the combined data
-        # that matches the number of rows in the engineered features
-        if len(final_features_reset) <= len(combined_original_features):
-            final_features_reset['PuzzleId'] = combined_original_features['PuzzleId'].values[:len(final_features_reset)]
-        else:
-            # If engineered features has more rows, we'll pad the PuzzleId with generated values
-            puzzle_ids = list(combined_original_features['PuzzleId'].values)
-            for i in range(len(combined_original_features), len(final_features_reset)):
-                puzzle_ids.append(f"generated_{i}")
-            final_features_reset['PuzzleId'] = puzzle_ids
+    # Split combined_original_features into train and test
+    train_features = combined_original_features[combined_original_features['is_train'] == 1].copy()
+    test_features = combined_original_features[combined_original_features['is_train'] == 0].copy()
 
-    # Set PuzzleId as index for both DataFrames
-    final_features_reset.set_index('PuzzleId', inplace=True)
-    combined_original_features.set_index('PuzzleId', inplace=True)
+    logger.info(f"Train features shape: {train_features.shape}")
+    logger.info(f"Test features shape: {test_features.shape}")
 
-    # Check for duplicate column names
-    duplicate_cols = set(final_features_reset.columns).intersection(set(combined_original_features.columns))
+    # Since the indices don't match, we'll use a different approach
+    # Reset the index of both DataFrames to use numeric indices
+    final_features_reset.reset_index(drop=True, inplace=True)
+    train_features_reset = train_features.reset_index()
+
+    # Check for duplicate column names between engineered features and train features
+    duplicate_cols = set(final_features_reset.columns).intersection(set(train_features_reset.columns))
     if duplicate_cols:
         logger.warning(f"Found {len(duplicate_cols)} duplicate column names: {duplicate_cols}")
-        # Rename duplicate columns in combined_original_features to avoid conflicts
-        combined_original_features = combined_original_features.rename(columns={col: f"{col}_original" for col in duplicate_cols})
+        # Rename duplicate columns in train_features to avoid conflicts
+        train_features_reset = train_features_reset.rename(columns={col: f"{col}_original" for col in duplicate_cols})
 
-    # Check for duplicate index values
-    if combined_original_features.index.duplicated().any():
-        logger.warning("Found duplicate PuzzleId values in the index. Making index unique.")
-        # Make the index unique by adding a suffix to duplicate values
-        combined_original_features = combined_original_features.reset_index()
-        combined_original_features['PuzzleId'] = combined_original_features['PuzzleId'].astype(str)
-        # Create a suffix based on the cumulative count of each PuzzleId
-        combined_original_features['suffix'] = combined_original_features.groupby('PuzzleId').cumcount().apply(
-            lambda x: f"_{x}" if x > 0 else "")
-        # Add the suffix to the PuzzleId
-        combined_original_features['PuzzleId'] = combined_original_features['PuzzleId'] + combined_original_features['suffix']
-        # Drop the suffix column
-        combined_original_features = combined_original_features.drop('suffix', axis=1)
-        # Set PuzzleId as the index again
-        combined_original_features = combined_original_features.set_index('PuzzleId')
+    # Combine the engineered features with train features horizontally (side by side)
+    # Since both DataFrames have the same number of rows and are in the same order,
+    # we can simply concatenate them along the columns axis
+    if len(final_features_reset) == len(train_features_reset):
+        logger.info("Engineered features and train features have the same number of rows, concatenating horizontally")
+        combined_train = pd.concat([final_features_reset, train_features_reset], axis=1)
+        logger.info(f"Combined train features shape: {combined_train.shape}")
 
-    # Combine the features using an inner join to keep only rows that exist in both DataFrames
-    combined_features = pd.concat([final_features_reset, combined_original_features], axis=1, join='inner')
-    logger.info(f"Combined features shape: {combined_features.shape}")
+        # Set PuzzleId as the index for combined_train
+        if 'PuzzleId' in combined_train.columns:
+            combined_train.set_index('PuzzleId', inplace=True)
+            logger.info("Set PuzzleId as index for combined train features")
+    else:
+        logger.warning(f"Engineered features and train features have different number of rows: {len(final_features_reset)} vs {len(train_features_reset)}")
+        # If they have different number of rows, we'll use only the train features
+        combined_train = train_features
+        logger.info(f"Using only train features: {combined_train.shape}")
+
+    # Combine train and test features
+    combined_features = pd.concat([combined_train, test_features])
+    logger.info(f"Combined features shape (train + test): {combined_features.shape}")
 
     # Save the combined dataset
     logger.info(f"Saving combined features to {output_path}")
