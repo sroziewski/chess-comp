@@ -75,54 +75,30 @@ def main():
         # Add a PuzzleId column based on the index (starting from 0)
         final_features['PuzzleId'] = [f"idx_{i}" for i in range(len(final_features))]
 
-    # Set PuzzleId as index for both dataframes
-    final_features.set_index('PuzzleId', inplace=True)
-    combined_features.set_index('PuzzleId', inplace=True)
-
     # Check for duplicate column names
     duplicate_cols = set(final_features.columns).intersection(set(combined_features.columns))
+    if duplicate_cols and 'PuzzleId' in duplicate_cols:
+        # Remove PuzzleId from duplicate_cols as we'll use it for merging
+        duplicate_cols.remove('PuzzleId')
+
     if duplicate_cols:
         logger.warning(f"Found {len(duplicate_cols)} duplicate column names: {duplicate_cols}")
         # Rename duplicate columns in combined_features to avoid conflicts
         combined_features = combined_features.rename(columns={col: f"{col}_combined" for col in duplicate_cols})
         logger.info(f"Renamed duplicate columns in combined_features")
 
-    # Check for duplicate index values in each dataframe
-    if final_features.index.duplicated().any():
-        logger.warning("Found duplicate PuzzleId values in final_features index. Making index unique.")
-        # Make the index unique by adding a suffix to duplicate values
-        final_features = final_features.reset_index()
-        final_features['PuzzleId'] = final_features['PuzzleId'].astype(str)
-        # Create a suffix based on the cumulative count of each PuzzleId
-        final_features['suffix'] = final_features.groupby('PuzzleId').cumcount().apply(
-            lambda x: f"_{x}" if x > 0 else "")
-        # Add the suffix to the PuzzleId
-        final_features['PuzzleId'] = final_features['PuzzleId'] + final_features['suffix']
-        # Drop the suffix column
-        final_features = final_features.drop('suffix', axis=1)
-        # Set PuzzleId as the index again
-        final_features = final_features.set_index('PuzzleId')
+    # Check for duplicate PuzzleId values
+    if final_features['PuzzleId'].duplicated().any():
+        logger.warning("Found duplicate PuzzleId values in final_features. This may cause issues with merging.")
 
-    if combined_features.index.duplicated().any():
-        logger.warning("Found duplicate PuzzleId values in combined_features index. Making index unique.")
-        # Make the index unique by adding a suffix to duplicate values
-        combined_features = combined_features.reset_index()
-        combined_features['PuzzleId'] = combined_features['PuzzleId'].astype(str)
-        # Create a suffix based on the cumulative count of each PuzzleId
-        combined_features['suffix'] = combined_features.groupby('PuzzleId').cumcount().apply(
-            lambda x: f"_{x}" if x > 0 else "")
-        # Add the suffix to the PuzzleId
-        combined_features['PuzzleId'] = combined_features['PuzzleId'] + combined_features['suffix']
-        # Drop the suffix column
-        combined_features = combined_features.drop('suffix', axis=1)
-        # Set PuzzleId as the index again
-        combined_features = combined_features.set_index('PuzzleId')
+    if combined_features['PuzzleId'].duplicated().any():
+        logger.warning("Found duplicate PuzzleId values in combined_features. This may cause issues with merging.")
 
-    # Merge the dataframes
-    logger.info("Merging final features with combined features")
+    # Merge the dataframes on PuzzleId column
+    logger.info("Merging final features with combined features on PuzzleId")
     try:
-        # Use inner join to ensure the number of rows stays the same
-        merged_features = pd.concat([final_features, combined_features], axis=1, join='inner')
+        # Use merge instead of concat to ensure proper matching on PuzzleId
+        merged_features = pd.merge(final_features, combined_features, on='PuzzleId', how='inner')
         logger.info(f"Merged features shape: {merged_features.shape}")
 
         # Check for missing values after merge
