@@ -116,6 +116,14 @@ def custom_complete_feature_engineering(df, tag_column='OpeningTags', n_workers=
         # Now reindex
         theme_features = theme_features.reindex(final_features.index)
 
+        # Check for duplicate column names
+        duplicate_cols = set(final_features.columns).intersection(set(theme_features.columns))
+        if duplicate_cols:
+            log.warning(f"Found {len(duplicate_cols)} duplicate column names: {duplicate_cols}")
+            # Rename duplicate columns in theme_features to avoid conflicts
+            theme_features = theme_features.rename(columns={col: f"{col}_theme" for col in duplicate_cols})
+            log.info(f"Renamed duplicate columns in theme_features")
+
         # Combine the features
         final_features = pd.concat([final_features, theme_features], axis=1)
 

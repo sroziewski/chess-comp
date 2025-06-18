@@ -609,16 +609,55 @@ def complete_feature_engineering(df, tag_column='OpeningTags', n_workers=None, c
     if final_features is not None:
         logger.info("Loaded final combined features from cache")
     else:
-        # Combine all feature sets
-        final_features = pd.concat([
-            opening_features,
-            theme_features,
-            position_features,
-            move_features,
-            eco_features,
-            move_analysis_features,
-            endgame_features
-        ], axis=1)
+        # Check for duplicate column names across all feature sets
+        all_feature_sets = [
+            ("opening", opening_features),
+            ("theme", theme_features),
+            ("position", position_features),
+            ("move", move_features),
+            ("eco", eco_features),
+            ("move_analysis", move_analysis_features),
+            ("endgame", endgame_features)
+        ]
+
+        # Create a dictionary to track column names and their sources
+        column_sources = {}
+        duplicate_cols = set()
+
+        # Identify duplicate columns
+        for source_name, feature_set in all_feature_sets:
+            if feature_set is None or feature_set.empty:
+                continue
+
+            for col in feature_set.columns:
+                if col in column_sources:
+                    duplicate_cols.add(col)
+                    logger.warning(f"Duplicate column '{col}' found in {source_name} features and {column_sources[col]} features")
+                else:
+                    column_sources[col] = source_name
+
+        # Rename duplicate columns in each feature set
+        renamed_feature_sets = []
+        for source_name, feature_set in all_feature_sets:
+            if feature_set is None or feature_set.empty:
+                continue
+
+            # Create a mapping for renaming duplicate columns
+            rename_map = {}
+            for col in feature_set.columns:
+                if col in duplicate_cols:
+                    rename_map[col] = f"{col}_{source_name}"
+
+            # Rename columns if needed
+            if rename_map:
+                logger.info(f"Renaming {len(rename_map)} duplicate columns in {source_name} features")
+                feature_set = feature_set.rename(columns=rename_map)
+
+            renamed_feature_sets.append(feature_set)
+
+        # Combine all feature sets with renamed columns
+        logger.info("Combining feature sets with unique column names")
+        final_features = pd.concat(renamed_feature_sets, axis=1)
 
         # Fill any remaining NaN values
         final_features = final_features.fillna(0)
