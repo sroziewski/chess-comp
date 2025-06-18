@@ -332,4 +332,12 @@ def engineer_chess_theme_features(df, theme_column='Themes',
         themes_df[svd_cols] = themes_df[svd_cols].fillna(0)  # Handle any NaNs from division by zero
 
     log.info(f"Engineered {themes_df.shape[1]} chess theme features")
+
+    # Preserve is_train column if it exists in the input DataFrame
+    if 'is_train' in df_copy.columns:
+        # Map is_train values to the themes_df index
+        is_train_series = df_copy['is_train']
+        themes_df['is_train'] = is_train_series.loc[themes_df.index].values
+        log.info("Preserved 'is_train' column in the output")
+
     return themes_df
