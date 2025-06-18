@@ -3,7 +3,7 @@
 Script to merge final features with combined features.
 
 This script:
-1. Loads final features from /raid/sroziewski/dev/chess-comp/data/final_features/final_features_latest.csv
+1. Loads final features from final_features_latest.csv
 2. Loads combined features from features_combined.csv
 3. Merges the two dataframes
 4. Saves the result to a new file
@@ -14,7 +14,7 @@ Usage:
 
 Arguments:
     --output: Path to the output file (default: final_merged_features.csv)
-    --final-features: Path to the final features file (default: /raid/sroziewski/dev/chess-comp/data/final_features/final_features_latest.csv)
+    --final-features: Path to the final features file (default: final_features_latest.csv)
     --combined-features: Path to the combined features file (default: features_combined.csv)
 
 Example:
@@ -38,7 +38,7 @@ def main():
     # Parse command-line arguments
     parser = argparse.ArgumentParser(description='Merge final features with combined features.')
     parser.add_argument('--output', type=str, default='final_merged_features.csv', help='Path to the output file')
-    parser.add_argument('--final-features', type=str, default='/raid/sroziewski/dev/chess-comp/data/final_features/final_features_latest.csv', help='Path to the final features file')
+    parser.add_argument('--final-features', type=str, default='final_features_latest.csv', help='Path to the final features file')
     parser.add_argument('--combined-features', type=str, default='features_combined.csv', help='Path to the combined features file')
     args = parser.parse_args()
 
@@ -64,13 +64,16 @@ def main():
         logger.error(f"Error loading combined features: {str(e)}")
         return
 
-    # Check if PuzzleId is in both dataframes
-    if 'PuzzleId' not in final_features.columns:
-        logger.error("PuzzleId column not found in final features")
-        return
+    # Check if PuzzleId is in combined features dataframe
     if 'PuzzleId' not in combined_features.columns:
         logger.error("PuzzleId column not found in combined features")
         return
+
+    # Check if PuzzleId is in final features dataframe
+    if 'PuzzleId' not in final_features.columns:
+        logger.info("PuzzleId column not found in final features. Using numeric index (idx) instead.")
+        # Add a PuzzleId column based on the index (starting from 0)
+        final_features['PuzzleId'] = [f"idx_{i}" for i in range(len(final_features))]
 
     # Set PuzzleId as index for both dataframes
     final_features.set_index('PuzzleId', inplace=True)
@@ -121,7 +124,7 @@ def main():
         # Use outer join to keep all rows from both dataframes
         merged_features = pd.concat([final_features, combined_features], axis=1)
         logger.info(f"Merged features shape: {merged_features.shape}")
-        
+
         # Check for missing values after merge
         missing_values = merged_features.isnull().sum().sum()
         if missing_values > 0:
