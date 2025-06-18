@@ -147,6 +147,22 @@ def main():
         # Rename duplicate columns in combined_original_features to avoid conflicts
         combined_original_features = combined_original_features.rename(columns={col: f"{col}_original" for col in duplicate_cols})
 
+    # Check for duplicate index values
+    if combined_original_features.index.duplicated().any():
+        logger.warning("Found duplicate PuzzleId values in the index. Making index unique.")
+        # Make the index unique by adding a suffix to duplicate values
+        combined_original_features = combined_original_features.reset_index()
+        combined_original_features['PuzzleId'] = combined_original_features['PuzzleId'].astype(str)
+        # Create a suffix based on the cumulative count of each PuzzleId
+        combined_original_features['suffix'] = combined_original_features.groupby('PuzzleId').cumcount().apply(
+            lambda x: f"_{x}" if x > 0 else "")
+        # Add the suffix to the PuzzleId
+        combined_original_features['PuzzleId'] = combined_original_features['PuzzleId'] + combined_original_features['suffix']
+        # Drop the suffix column
+        combined_original_features = combined_original_features.drop('suffix', axis=1)
+        # Set PuzzleId as the index again
+        combined_original_features = combined_original_features.set_index('PuzzleId')
+
     # Combine the features using an inner join to keep only rows that exist in both DataFrames
     combined_features = pd.concat([final_features_reset, combined_original_features], axis=1, join='inner')
     logger.info(f"Combined features shape: {combined_features.shape}")
