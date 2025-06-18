@@ -13,6 +13,11 @@ import logging
 from pathlib import Path
 from chess_puzzle_rating.data.pipeline import run_data_pipeline
 from chess_puzzle_rating.utils.progress import get_logger
+import pandas as pd
+from chess_puzzle_rating.features.pipeline import (
+    complete_feature_engineering as original_complete_feature_engineering,
+    load_dataframe, save_dataframe
+)
 
 # Set the boost_compute directory to /raid/sroziewski/.boost_compute
 boost_compute_dir = '/raid/sroziewski/.boost_compute'
@@ -20,6 +25,110 @@ os.environ['BOOST_COMPUTE_DEFAULT_TEMP_PATH'] = boost_compute_dir
 
 # Create the boost_compute directory if it doesn't exist
 os.makedirs(boost_compute_dir, exist_ok=True)
+
+# Path to pre-computed theme features
+THEME_FEATURES_PATH = '/raid/sroziewski/dev/chess-comp/data/themes_features'
+
+def custom_complete_feature_engineering(df, tag_column='OpeningTags', n_workers=None, config_path=None):
+    """
+    Custom version of complete_feature_engineering that loads pre-computed theme features
+    instead of computing them.
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        DataFrame containing chess puzzles
+    tag_column : str, optional
+        Name of the column containing opening tags, by default 'OpeningTags'
+    n_workers : int, optional
+        Number of worker processes to use for parallel processing.
+        If None, uses the value from config or the number of CPU cores.
+    config_path : str, optional
+        Path to the configuration file. If None, use default configuration.
+
+    Returns
+    -------
+    tuple
+        (final_features_df, model, predictions_df)
+        - final_features_df: DataFrame with all engineered features
+        - model: Trained model for predicting opening tags
+        - predictions_df: DataFrame with predicted opening tags and confidence scores
+    """
+    log = get_logger()
+    log.info("Using custom feature engineering with pre-computed theme features")
+
+    # First, run the original feature engineering to get all features
+    log.info("Running original feature engineering")
+    final_features, model, predictions = original_complete_feature_engineering(df, tag_column, n_workers, config_path)
+
+    # Now, load the pre-computed theme features
+    log.info(f"Loading pre-computed theme features from {THEME_FEATURES_PATH}")
+
+    # Try to find the most recent theme features file in the directory
+    try:
+        # Check if the directory exists
+        if not os.path.exists(THEME_FEATURES_PATH):
+            log.error(f"Theme features directory not found: {THEME_FEATURES_PATH}")
+            log.error("Using original features instead")
+            return final_features, model, predictions
+
+        theme_files = [f for f in os.listdir(THEME_FEATURES_PATH) if f.endswith('.csv')]
+        if not theme_files:
+            log.error(f"No theme feature files found in {THEME_FEATURES_PATH}")
+            log.error("Using original features instead")
+            return final_features, model, predictions
+
+        # Get the most recent file based on modification time
+        most_recent = max(theme_files, key=lambda f: os.path.getmtime(os.path.join(THEME_FEATURES_PATH, f)))
+        theme_file_path = os.path.join(THEME_FEATURES_PATH, most_recent)
+
+        log.info(f"Loading theme features from {theme_file_path}")
+        theme_features = pd.read_csv(theme_file_path, index_col=0)
+
+        # Check if the theme features have the same index as the final features
+        missing_indices = [idx for idx in final_features.index if idx not in theme_features.index]
+        if missing_indices:
+            log.warning(f"{len(missing_indices)} indices in final features are missing from theme features")
+            log.warning("This may cause issues with feature combination")
+
+        # Replace theme features in the final features DataFrame
+        # First, identify theme feature columns in the final features
+        theme_cols = [col for col in final_features.columns if col.startswith('theme_') or col in ['is_mate', 'is_fork', 'is_pin', 'is_skewer', 'is_discovery', 'is_sacrifice', 'is_promotion', 'is_endgame', 'is_middlegame', 'is_opening']]
+
+        # Remove existing theme features
+        if theme_cols:
+            log.info(f"Removing {len(theme_cols)} existing theme features")
+            final_features = final_features.drop(columns=theme_cols)
+
+        # Add pre-computed theme features
+        log.info(f"Adding {theme_features.shape[1]} pre-computed theme features")
+
+        # Ensure the theme features have the same index as the final features
+        # First, convert index to string if it's not already
+        if not all(isinstance(idx, str) for idx in theme_features.index):
+            log.info("Converting theme features index to string")
+            theme_features.index = theme_features.index.astype(str)
+
+        if not all(isinstance(idx, str) for idx in final_features.index):
+            log.info("Converting final features index to string")
+            final_features.index = final_features.index.astype(str)
+
+        # Now reindex
+        theme_features = theme_features.reindex(final_features.index)
+
+        # Combine the features
+        final_features = pd.concat([final_features, theme_features], axis=1)
+
+        # Fill any NaN values that might have been introduced
+        final_features = final_features.fillna(0)
+
+        log.info(f"Final feature set has {final_features.shape[1]} features")
+
+    except Exception as e:
+        log.error(f"Error loading pre-computed theme features: {str(e)}")
+        log.error("Using original features instead")
+
+    return final_features, model, predictions
 
 def main():
     """Run the data pipeline and log information about the results."""
@@ -67,6 +176,12 @@ def main():
 
         config_path = temp_config_path
         log.info(f"Using temporary config with cache directory: {args.cache_dir}")
+
+    # Monkey patch the complete_feature_engineering function to use our custom one
+    log.info("Monkey patching complete_feature_engineering to use pre-computed theme features")
+    import chess_puzzle_rating.features.pipeline
+    original_function = chess_puzzle_rating.features.pipeline.complete_feature_engineering
+    chess_puzzle_rating.features.pipeline.complete_feature_engineering = custom_complete_feature_engineering
 
     # Run the pipeline
     try:

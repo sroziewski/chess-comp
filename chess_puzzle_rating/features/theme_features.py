@@ -125,7 +125,6 @@ def engineer_chess_theme_features(df, theme_column='Themes',
     # Use exactly 4 workers as specified
     max_workers = 4
     log.info(f"Using {max_workers} workers for parallel theme parsing")
-
     # Process in smaller chunks to improve performance and prevent stalling
 
     # Use a more reasonable chunk size (100,000 items per chunk)
