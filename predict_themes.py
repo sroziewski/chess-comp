@@ -14,7 +14,7 @@ This script:
 Usage:
     python predict_themes.py [--train-file TRAIN_FILE] [--test-file TEST_FILE] 
                             [--output-file OUTPUT_FILE] [--confidence-threshold THRESHOLD]
-                            [--n-jobs N_JOBS] [--log-file LOG_FILE]
+                            [--n-jobs N_JOBS] [--use-gpu] [--log-file LOG_FILE]
 
 Arguments:
     --train-file: Path to the training data file (default: /raid/sroziewski/chess/training_data_02_01.csv)
@@ -22,6 +22,7 @@ Arguments:
     --output-file: Path to the output file (default: /raid/sroziewski/chess/testing_data_with_themes_cropped.csv)
     --confidence-threshold: Confidence threshold for theme prediction (default: 0.7)
     --n-jobs: Number of jobs to run in parallel (default: -1, use all available cores)
+    --use-gpu: Use GPU for training if available (default: False)
     --log-file: Path to the log file (default: predict_themes_{timestamp}.log)
 """
 
@@ -347,7 +348,7 @@ def prepare_theme_data(df):
 
     return mlb, filtered_theme_lists
 
-def train_theme_models(X, y_binary, theme_names, n_jobs=-1, min_auc=0.7):
+def train_theme_models(X, y_binary, theme_names, n_jobs=-1, min_auc=0.7, use_gpu=False):
     """
     Train a binary classifier for each theme.
 
@@ -363,6 +364,8 @@ def train_theme_models(X, y_binary, theme_names, n_jobs=-1, min_auc=0.7):
         Number of jobs to run in parallel, by default -1 (use all available cores)
     min_auc : float, optional
         Minimum AUC score for a model to be considered good enough, by default 0.7
+    use_gpu : bool, optional
+        Whether to use GPU for training, by default False
 
     Returns
     -------
@@ -394,15 +397,26 @@ def train_theme_models(X, y_binary, theme_names, n_jobs=-1, min_auc=0.7):
             continue
 
         # Create and train model
-        model = lgb.LGBMClassifier(
-            n_estimators=100,
-            learning_rate=0.1,
-            max_depth=7,
-            num_leaves=31,
-            min_child_samples=20,
-            n_jobs=n_jobs,
-            random_state=42
-        )
+        params = {
+            'n_estimators': 100,
+            'learning_rate': 0.1,
+            'max_depth': 7,
+            'num_leaves': 31,
+            'min_child_samples': 20,
+            'n_jobs': n_jobs,
+            'random_state': 42
+        }
+
+        # Add GPU parameters if GPU is enabled
+        if use_gpu:
+            logger.info(f"Using GPU for training model for theme '{theme}'")
+            params.update({
+                'device': 'gpu',
+                'gpu_platform_id': 0,
+                'gpu_device_id': 0
+            })
+
+        model = lgb.LGBMClassifier(**params)
 
         model.fit(
             X_train, 
@@ -503,6 +517,8 @@ def main():
                         help='Confidence threshold for theme prediction')
     parser.add_argument('--n-jobs', type=int, default=-1,
                         help='Number of jobs to run in parallel')
+    parser.add_argument('--use-gpu', action='store_true',
+                        help='Use GPU for training (if available)')
     parser.add_argument('--log-file', type=str, default=None,
                         help='Path to the log file')
 
@@ -538,7 +554,9 @@ def main():
 
         # Train theme models
         logger.info("Training theme models")
-        models, theme_metrics = train_theme_models(train_features, y_binary, theme_names, n_jobs=args.n_jobs)
+        if args.use_gpu:
+            logger.info("GPU training enabled")
+        models, theme_metrics = train_theme_models(train_features, y_binary, theme_names, n_jobs=args.n_jobs, use_gpu=args.use_gpu)
 
         # Extract features from test data
         logger.info("Extracting features from test data")
