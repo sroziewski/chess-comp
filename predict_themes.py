@@ -32,6 +32,7 @@ import numpy as np
 import chess
 import logging
 import argparse
+import time
 from datetime import datetime
 from tqdm import tqdm
 from collections import Counter
@@ -74,11 +75,21 @@ def extract_position_features(fen):
     dict
         Dictionary of extracted features
     """
+    start_time = time.time()
+
     try:
+        # Initialize board from FEN
+        board_init_start = time.time()
         board = chess.Board(fen)
-        features = {}
+        board_init_time = time.time() - board_init_start
+
+        features = {
+            'fen_length': len(fen),
+            'board_init_time': board_init_time
+        }
 
         # Piece counts
+        piece_count_start = time.time()
         pieces = board.piece_map()
         piece_counts = {
             'white_pawns': 0, 'white_knights': 0, 'white_bishops': 0, 
@@ -93,8 +104,10 @@ def extract_position_features(fen):
             piece_counts[f"{color}_{piece_type}"] += 1
 
         features.update(piece_counts)
+        features['piece_count_time'] = time.time() - piece_count_start
 
         # Material balance
+        material_start = time.time()
         material_values = {
             chess.PAWN: 1, chess.KNIGHT: 3, chess.BISHOP: 3,
             chess.ROOK: 5, chess.QUEEN: 9, chess.KING: 0
@@ -105,11 +118,15 @@ def extract_position_features(fen):
 
         features['material_balance'] = white_material - black_material
         features['total_material'] = white_material + black_material
+        features['material_calc_time'] = time.time() - material_start
 
         # Check and attack features
+        check_start = time.time()
         features['is_check'] = int(board.is_check())
+        features['check_calc_time'] = time.time() - check_start
 
         # Count attackers and defenders for each square
+        attack_start = time.time()
         attack_defend_counts = {'white_attackers': 0, 'black_attackers': 0}
 
         for square in chess.SQUARES:
@@ -120,8 +137,10 @@ def extract_position_features(fen):
             attack_defend_counts['black_attackers'] += black_attackers
 
         features.update(attack_defend_counts)
+        features['attack_calc_time'] = time.time() - attack_start
 
         # King safety
+        king_safety_start = time.time()
         white_king_square = board.king(chess.WHITE)
         black_king_square = board.king(chess.BLACK)
 
@@ -136,8 +155,10 @@ def extract_position_features(fen):
             features['black_king_attackers'] = black_king_attackers
         else:
             features['black_king_attackers'] = 0
+        features['king_safety_time'] = time.time() - king_safety_start
 
         # Game phase estimation
+        phase_start = time.time()
         if features['total_material'] < 30:
             features['is_endgame'] = 1
             features['is_middlegame'] = 0
@@ -150,11 +171,19 @@ def extract_position_features(fen):
             features['is_endgame'] = 0
             features['is_middlegame'] = 1
             features['is_opening'] = 0
+        features['phase_calc_time'] = time.time() - phase_start
+
+        # Total processing time
+        features['total_position_time'] = time.time() - start_time
 
         return features
     except Exception as e:
-        # Return empty features if there's an error
-        return {}
+        # Return basic error information
+        return {
+            'error': str(e),
+            'fen_length': len(fen) if isinstance(fen, str) else 0,
+            'total_position_time': time.time() - start_time
+        }
 
 def extract_move_features(moves_str, fen):
     """
@@ -172,58 +201,102 @@ def extract_move_features(moves_str, fen):
     dict
         Dictionary of extracted features
     """
-    try:
-        features = {}
+    start_time = time.time()
 
-        # If moves string is empty, return empty features
+    try:
+        features = {
+            'moves_str_length': len(moves_str) if isinstance(moves_str, str) else 0,
+            'fen_length': len(fen) if isinstance(fen, str) else 0
+        }
+
+        # If moves string is empty, return basic features
         if not moves_str or pd.isna(moves_str):
+            features['total_move_time'] = time.time() - start_time
+            features['empty_moves'] = True
             return features
 
         # Parse moves
+        parse_start = time.time()
         moves = moves_str.split()
         features['num_moves'] = len(moves)
+        features['parse_time'] = time.time() - parse_start
 
         # Initialize board from FEN
+        board_init_start = time.time()
         board = chess.Board(fen)
+        features['board_init_time'] = time.time() - board_init_start
 
         # Track move characteristics
         checks = 0
         captures = 0
         promotions = 0
+        invalid_moves = 0
 
         # Process each move
-        for move_str in moves:
+        move_processing_start = time.time()
+        for i, move_str in enumerate(moves):
             try:
                 # Parse move
+                move_parse_start = time.time()
                 move = chess.Move.from_uci(move_str)
 
                 # Check if move is a capture
-                if board.is_capture(move):
+                capture_check_start = time.time()
+                is_capture = board.is_capture(move)
+                if is_capture:
                     captures += 1
 
                 # Check if move is a promotion
+                promotion_check_start = time.time()
                 if move.promotion is not None:
                     promotions += 1
 
                 # Make the move
+                push_start = time.time()
                 board.push(move)
 
                 # Check if move gives check
+                check_start = time.time()
                 if board.is_check():
                     checks += 1
 
-            except Exception:
-                # Skip invalid moves
+                # Track timing for the most expensive operations
+                if i == 0:  # Only track detailed timing for first move to reduce overhead
+                    features['first_move_parse_time'] = time.time() - move_parse_start
+                    features['first_move_capture_check_time'] = time.time() - capture_check_start
+                    features['first_move_promotion_check_time'] = time.time() - promotion_check_start
+                    features['first_move_push_time'] = time.time() - push_start
+                    features['first_move_check_time'] = time.time() - check_start
+
+            except Exception as move_error:
+                # Track invalid moves
+                invalid_moves += 1
+                if invalid_moves <= 3:  # Limit the number of errors we log to avoid bloat
+                    features[f'move_error_{invalid_moves}'] = str(move_error)[:100]  # Truncate long error messages
                 continue
 
+        features['move_processing_time'] = time.time() - move_processing_start
+        features['invalid_moves'] = invalid_moves
+
+        # Calculate percentages
+        stats_start = time.time()
         features['pct_checks'] = checks / max(1, len(moves))
         features['pct_captures'] = captures / max(1, len(moves))
         features['pct_promotions'] = promotions / max(1, len(moves))
+        features['stats_calc_time'] = time.time() - stats_start
+
+        # Total processing time
+        features['total_move_time'] = time.time() - start_time
 
         return features
     except Exception as e:
-        # Return empty features if there's an error
-        return {}
+        # Return basic error information
+        return {
+            'error': str(e)[:100],  # Truncate long error messages
+            'moves_str_length': len(moves_str) if isinstance(moves_str, str) else 0,
+            'fen_length': len(fen) if isinstance(fen, str) else 0,
+            'total_move_time': time.time() - start_time
+        }
 
 def extract_move_features_from_tuple(moves_fen_tuple):
     """
@@ -239,8 +312,19 @@ def extract_move_features_from_tuple(moves_fen_tuple):
     dict
         Dictionary of extracted features
     """
-    moves_str, fen = moves_fen_tuple
-    return extract_move_features(moves_str, fen)
+    tuple_start_time = time.time()
+    try:
+        moves_str, fen = moves_fen_tuple
+        features = extract_move_features(moves_str, fen)
+        # Add wrapper timing information
+        features['tuple_wrapper_time'] = time.time() - tuple_start_time
+        return features
+    except Exception as e:
+        # Return basic error information if the tuple unpacking fails
+        return {
+            'tuple_error': str(e)[:100],  # Truncate long error messages
+            'tuple_wrapper_time': time.time() - tuple_start_time
+        }
 
 def extract_features(df, n_jobs=-1):
     """
@@ -260,6 +344,12 @@ def extract_features(df, n_jobs=-1):
     """
     logger = logging.getLogger()
     logger.info("Extracting features from FEN and Moves")
+    logger.info(f"Input data shape: {df.shape}")
+
+    # Log some sample data to help with debugging
+    if len(df) > 0:
+        logger.info(f"Sample FEN: {df['FEN'].iloc[0]}")
+        logger.info(f"Sample Moves: {df['Moves'].iloc[0]}")
 
     # Determine the number of workers to use
     if n_jobs <= 0:
@@ -272,41 +362,163 @@ def extract_features(df, n_jobs=-1):
     logger.info("Extracting position features")
     position_features = []
 
+    # Create batches for better logging
+    batch_size = max(1, len(df) // 10)  # Create ~10 batches
+    logger.info(f"Processing in batches of ~{batch_size} samples")
+
     # Create a list of (moves_str, fen) tuples for move features
+    logger.info("Preparing move-FEN tuples for parallel processing")
     moves_fen_tuples = list(zip(df['Moves'], df['FEN']))
+    logger.info(f"Created {len(moves_fen_tuples)} move-FEN tuples")
 
     # Use a single ProcessPoolExecutor for both feature extraction tasks
+    logger.info("Starting parallel feature extraction")
     with concurrent.futures.ProcessPoolExecutor(max_workers=n_jobs) as executor:
         # Extract position features
+        logger.info("Submitting position feature extraction tasks")
         position_map = executor.map(extract_position_features, df['FEN'])
-        for features in track_progress(position_map, total=len(df), description="Position features", logger=logger):
+
+        logger.info("Processing position features")
+        position_start_time = time.time()
+        for i, features in enumerate(track_progress(position_map, total=len(df), description="Position features", logger=logger)):
             position_features.append(features)
+
+            # Log progress at regular intervals
+            if (i + 1) % batch_size == 0 or i == len(df) - 1:
+                elapsed = time.time() - position_start_time
+                logger.info(f"Processed {i+1}/{len(df)} position features in {elapsed:.2f}s ({(i+1)/elapsed:.2f} samples/s)")
+
+                # Log feature counts to help identify potential issues
+                feature_counts = sum(len(f) for f in position_features[-batch_size:])
+                logger.info(f"Last batch extracted {feature_counts} position features (avg: {feature_counts/min(batch_size, i+1):.1f} per sample)")
 
         # Extract move features
         logger.info("Extracting move features")
         move_features = []
 
+        logger.info("Submitting move feature extraction tasks")
         move_map = executor.map(extract_move_features_from_tuple, moves_fen_tuples)
-        for features in track_progress(move_map, total=len(df), description="Move features", logger=logger):
+
+        logger.info("Processing move features")
+        move_start_time = time.time()
+        for i, features in enumerate(track_progress(move_map, total=len(df), description="Move features", logger=logger)):
             move_features.append(features)
+
+            # Log progress at regular intervals
+            if (i + 1) % batch_size == 0 or i == len(df) - 1:
+                elapsed = time.time() - move_start_time
+                logger.info(f"Processed {i+1}/{len(df)} move features in {elapsed:.2f}s ({(i+1)/elapsed:.2f} samples/s)")
+
+                # Log feature counts to help identify potential issues
+                feature_counts = sum(len(f) for f in move_features[-batch_size:])
+                logger.info(f"Last batch extracted {feature_counts} move features (avg: {feature_counts/min(batch_size, i+1):.1f} per sample)")
+
+    # Analyze timing data from position features
+    logger.info("Analyzing position feature extraction timing")
+    position_times = [f.get('total_position_time', 0) for f in position_features if isinstance(f, dict)]
+    if position_times:
+        avg_position_time = sum(position_times) / len(position_times)
+        max_position_time = max(position_times)
+        min_position_time = min(position_times)
+        logger.info(f"Position feature extraction timing: avg={avg_position_time:.4f}s, min={min_position_time:.4f}s, max={max_position_time:.4f}s")
+
+        # Identify slow samples
+        slow_threshold = avg_position_time * 5  # 5x average time is considered slow
+        slow_indices = [i for i, t in enumerate(position_times) if t > slow_threshold]
+        if slow_indices:
+            logger.info(f"Found {len(slow_indices)} slow position feature extractions (>5x avg time)")
+            for i in slow_indices[:5]:  # Log details for up to 5 slow samples
+                logger.info(f"Slow position sample {i}: {position_times[i]:.4f}s, FEN: {df['FEN'].iloc[i][:50]}...")
+
+        # Analyze sub-timings if available
+        sub_timings = {
+            'board_init_time': [],
+            'piece_count_time': [],
+            'material_calc_time': [],
+            'check_calc_time': [],
+            'attack_calc_time': [],
+            'king_safety_time': [],
+            'phase_calc_time': []
+        }
+
+        for f in position_features:
+            if isinstance(f, dict):
+                for key in sub_timings:
+                    if key in f:
+                        sub_timings[key].append(f[key])
+
+        for key, times in sub_timings.items():
+            if times:
+                avg_time = sum(times) / len(times)
+                max_time = max(times)
+                logger.info(f"  {key}: avg={avg_time:.4f}s, max={max_time:.4f}s")
+
+    # Analyze timing data from move features
+    logger.info("Analyzing move feature extraction timing")
+    move_times = [f.get('total_move_time', 0) for f in move_features if isinstance(f, dict)]
+    if move_times:
+        avg_move_time = sum(move_times) / len(move_times)
+        max_move_time = max(move_times)
+        min_move_time = min(move_times)
+        logger.info(f"Move feature extraction timing: avg={avg_move_time:.4f}s, min={min_move_time:.4f}s, max={max_move_time:.4f}s")
+
+        # Identify slow samples
+        slow_threshold = avg_move_time * 5  # 5x average time is considered slow
+        slow_indices = [i for i, t in enumerate(move_times) if t > slow_threshold]
+        if slow_indices:
+            logger.info(f"Found {len(slow_indices)} slow move feature extractions (>5x avg time)")
+            for i in slow_indices[:5]:  # Log details for up to 5 slow samples
+                logger.info(f"Slow move sample {i}: {move_times[i]:.4f}s, Moves length: {move_features[i].get('moves_str_length', 'N/A')}")
+
+        # Count errors
+        error_count = sum(1 for f in move_features if isinstance(f, dict) and 'error' in f)
+        if error_count > 0:
+            logger.info(f"Found {error_count} errors in move feature extraction")
+            # Log a few examples
+            for i, f in enumerate(move_features):
+                if isinstance(f, dict) and 'error' in f:
+                    logger.info(f"Move error in sample {i}: {f['error']}")
+                    if i >= 4:  # Log at most 5 errors
+                        break
 
     # Combine features
     logger.info("Combining features")
+    logger.info(f"Position features: {len(position_features)}, Move features: {len(move_features)}")
     all_features = []
 
+    combine_start_time = time.time()
     for i in range(len(df)):
         combined = {}
         combined.update(position_features[i])
         combined.update(move_features[i])
         all_features.append(combined)
 
+        # Log progress at regular intervals
+        if (i + 1) % batch_size == 0 or i == len(df) - 1:
+            elapsed = time.time() - combine_start_time
+            logger.info(f"Combined {i+1}/{len(df)} feature sets in {elapsed:.2f}s ({(i+1)/elapsed:.2f} samples/s)")
+
     # Convert to DataFrame
+    logger.info("Converting to DataFrame")
+    df_start_time = time.time()
     features_df = pd.DataFrame(all_features)
+    logger.info(f"Converted to DataFrame in {time.time() - df_start_time:.2f}s")
 
     # Fill missing values
+    logger.info("Filling missing values")
+    fill_start_time = time.time()
     features_df = features_df.fillna(0)
+    logger.info(f"Filled missing values in {time.time() - fill_start_time:.2f}s")
 
-    logger.info(f"Extracted {features_df.shape[1]} features")
+    # Remove timing columns to keep the feature set clean
+    timing_columns = [col for col in features_df.columns if any(col.endswith(suffix) for suffix in 
+                     ['_time', 'time_', 'error', 'wrapper_time'])]
+    if timing_columns:
+        logger.info(f"Removing {len(timing_columns)} timing and error columns from final features")
+        features_df = features_df.drop(columns=timing_columns)
+
+    logger.info(f"Extracted {features_df.shape[1]} features for {len(df)} samples")
+    logger.info(f"Total feature extraction time: {time.time() - position_start_time:.2f}s")
     return features_df
 
 # Theme prediction functions
