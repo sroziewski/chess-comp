@@ -76,8 +76,15 @@ def extract_position_features(fen):
         Dictionary of extracted features
     """
     start_time = time.time()
+    # Set an overall timeout for the entire function
+    max_total_time = 15.0  # 15 seconds max for the entire function
 
     try:
+        # Function to check if we've exceeded the total time limit
+        def check_timeout():
+            if time.time() - start_time > max_total_time:
+                return True
+            return False
         # Initialize board from FEN
         board_init_start = time.time()
         board = chess.Board(fen)
@@ -87,6 +94,16 @@ def extract_position_features(fen):
             'fen_length': len(fen),
             'board_init_time': board_init_time
         }
+
+        # Check for timeout after board initialization
+        if check_timeout():
+            return {
+                'fen_length': len(fen),
+                'board_init_time': board_init_time,
+                'total_position_time': time.time() - start_time,
+                'overall_timeout': True,
+                'timeout_location': 'after_board_init'
+            }
 
         # Piece counts
         piece_count_start = time.time()
@@ -106,6 +123,13 @@ def extract_position_features(fen):
         features.update(piece_counts)
         features['piece_count_time'] = time.time() - piece_count_start
 
+        # Check for timeout after piece counting
+        if check_timeout():
+            features['overall_timeout'] = True
+            features['timeout_location'] = 'after_piece_count'
+            features['total_position_time'] = time.time() - start_time
+            return features
+
         # Material balance
         material_start = time.time()
         material_values = {
@@ -120,42 +144,126 @@ def extract_position_features(fen):
         features['total_material'] = white_material + black_material
         features['material_calc_time'] = time.time() - material_start
 
+        # Check for timeout after material calculation
+        if check_timeout():
+            features['overall_timeout'] = True
+            features['timeout_location'] = 'after_material_calc'
+            features['total_position_time'] = time.time() - start_time
+            return features
+
         # Check and attack features
         check_start = time.time()
         features['is_check'] = int(board.is_check())
         features['check_calc_time'] = time.time() - check_start
 
-        # Count attackers and defenders for each square
+        # Check for timeout after check calculation
+        if check_timeout():
+            features['overall_timeout'] = True
+            features['timeout_location'] = 'after_check_calc'
+            features['total_position_time'] = time.time() - start_time
+            return features
+
+        # Count attackers and defenders for important squares only (not all 64)
         attack_start = time.time()
         attack_defend_counts = {'white_attackers': 0, 'black_attackers': 0}
 
-        for square in chess.SQUARES:
-            white_attackers = len(board.attackers(chess.WHITE, square))
-            black_attackers = len(board.attackers(chess.BLACK, square))
+        # Define important squares (center squares and piece locations)
+        important_squares = set()
+        # Add center squares
+        for square in [chess.E4, chess.D4, chess.E5, chess.D5]:
+            important_squares.add(square)
+        # Add squares with pieces
+        for square in pieces.keys():
+            important_squares.add(square)
 
-            attack_defend_counts['white_attackers'] += white_attackers
-            attack_defend_counts['black_attackers'] += black_attackers
+        # Set a timeout for the entire attackers calculation
+        max_attack_calc_time = 5.0  # 5 seconds max
+        squares_processed = 0
+
+        for square in important_squares:
+            # Check if we've exceeded the timeout
+            if time.time() - attack_start > max_attack_calc_time:
+                features['attack_calc_timeout'] = True
+                features['attack_calc_squares_processed'] = squares_processed
+                break
+
+            try:
+                white_attackers = len(board.attackers(chess.WHITE, square))
+                black_attackers = len(board.attackers(chess.BLACK, square))
+
+                attack_defend_counts['white_attackers'] += white_attackers
+                attack_defend_counts['black_attackers'] += black_attackers
+                squares_processed += 1
+            except Exception as e:
+                features[f'attack_calc_error_{squares_processed}'] = str(e)[:50]
+                continue
 
         features.update(attack_defend_counts)
         features['attack_calc_time'] = time.time() - attack_start
+        features['attack_calc_squares_total'] = len(important_squares)
+        features['attack_calc_squares_processed'] = squares_processed
 
-        # King safety
+        # Check for timeout after attackers calculation
+        if check_timeout():
+            features['overall_timeout'] = True
+            features['timeout_location'] = 'after_attack_calc'
+            features['total_position_time'] = time.time() - start_time
+            return features
+
+        # King safety with timeout
         king_safety_start = time.time()
-        white_king_square = board.king(chess.WHITE)
-        black_king_square = board.king(chess.BLACK)
+        max_king_safety_time = 3.0  # 3 seconds max
 
-        if white_king_square is not None:
-            white_king_attackers = len(board.attackers(chess.BLACK, white_king_square))
-            features['white_king_attackers'] = white_king_attackers
-        else:
+        try:
+            # Get king squares
+            white_king_square = board.king(chess.WHITE)
+            black_king_square = board.king(chess.BLACK)
+
+            # Process white king safety
+            if white_king_square is not None and time.time() - king_safety_start < max_king_safety_time:
+                try:
+                    white_king_attackers = len(board.attackers(chess.BLACK, white_king_square))
+                    features['white_king_attackers'] = white_king_attackers
+                except Exception as e:
+                    features['white_king_error'] = str(e)[:50]
+                    features['white_king_attackers'] = 0
+            else:
+                features['white_king_attackers'] = 0
+                if white_king_square is None:
+                    features['white_king_missing'] = True
+                elif time.time() - king_safety_start >= max_king_safety_time:
+                    features['white_king_timeout'] = True
+
+            # Process black king safety
+            if black_king_square is not None and time.time() - king_safety_start < max_king_safety_time:
+                try:
+                    black_king_attackers = len(board.attackers(chess.WHITE, black_king_square))
+                    features['black_king_attackers'] = black_king_attackers
+                except Exception as e:
+                    features['black_king_error'] = str(e)[:50]
+                    features['black_king_attackers'] = 0
+            else:
+                features['black_king_attackers'] = 0
+                if black_king_square is None:
+                    features['black_king_missing'] = True
+                elif time.time() - king_safety_start >= max_king_safety_time:
+                    features['black_king_timeout'] = True
+
+        except Exception as e:
+            features['king_safety_error'] = str(e)[:50]
             features['white_king_attackers'] = 0
-
-        if black_king_square is not None:
-            black_king_attackers = len(board.attackers(chess.WHITE, black_king_square))
-            features['black_king_attackers'] = black_king_attackers
-        else:
             features['black_king_attackers'] = 0
+
         features['king_safety_time'] = time.time() - king_safety_start
+        if time.time() - king_safety_start >= max_king_safety_time:
+            features['king_safety_timeout'] = True
+
+        # Check for timeout after king safety calculation
+        if check_timeout():
+            features['overall_timeout'] = True
+            features['timeout_location'] = 'after_king_safety'
+            features['total_position_time'] = time.time() - start_time
+            return features
 
         # Game phase estimation
         phase_start = time.time()
@@ -173,8 +281,20 @@ def extract_position_features(fen):
             features['is_opening'] = 0
         features['phase_calc_time'] = time.time() - phase_start
 
+        # Check for timeout after phase calculation
+        if check_timeout():
+            features['overall_timeout'] = True
+            features['timeout_location'] = 'after_phase_calc'
+            features['total_position_time'] = time.time() - start_time
+            return features
+
         # Total processing time
         features['total_position_time'] = time.time() - start_time
+
+        # Final check to ensure we're not exceeding the timeout
+        if time.time() - start_time > max_total_time:
+            features['overall_timeout'] = True
+            features['timeout_location'] = 'final_check'
 
         return features
     except Exception as e:
@@ -202,6 +322,14 @@ def extract_move_features(moves_str, fen):
         Dictionary of extracted features
     """
     start_time = time.time()
+    # Set an overall timeout for the entire function
+    max_total_time = 10.0  # 10 seconds max for the entire function
+
+    # Function to check if we've exceeded the total time limit
+    def check_timeout():
+        if time.time() - start_time > max_total_time:
+            return True
+        return False
 
     try:
         features = {
@@ -226,6 +354,13 @@ def extract_move_features(moves_str, fen):
         board = chess.Board(fen)
         features['board_init_time'] = time.time() - board_init_start
 
+        # Check for timeout after board initialization
+        if check_timeout():
+            features['overall_timeout'] = True
+            features['timeout_location'] = 'after_board_init'
+            features['total_move_time'] = time.time() - start_time
+            return features
+
         # Track move characteristics
         checks = 0
         captures = 0
@@ -234,7 +369,26 @@ def extract_move_features(moves_str, fen):
 
         # Process each move
         move_processing_start = time.time()
+        max_move_processing_time = 5.0  # 5 seconds max for move processing
+
         for i, move_str in enumerate(moves):
+            # Check for timeout during move processing
+            current_time = time.time()
+            if current_time - start_time > max_total_time:
+                features['overall_timeout'] = True
+                features['timeout_location'] = 'during_move_processing'
+                features['moves_processed'] = i
+                features['total_moves'] = len(moves)
+                features['total_move_time'] = current_time - start_time
+                break
+
+            # Check if we've spent too much time on move processing
+            if current_time - move_processing_start > max_move_processing_time:
+                features['move_processing_timeout'] = True
+                features['moves_processed'] = i
+                features['total_moves'] = len(moves)
+                break
+
             try:
                 # Parse move
                 move_parse_start = time.time()
@@ -288,6 +442,11 @@ def extract_move_features(moves_str, fen):
         # Total processing time
         features['total_move_time'] = time.time() - start_time
 
+        # Final check to ensure we're not exceeding the timeout
+        if time.time() - start_time > max_total_time:
+            features['overall_timeout'] = True
+            features['timeout_location'] = 'final_check'
+
         return features
     except Exception as e:
         # Return basic error information
@@ -313,9 +472,26 @@ def extract_move_features_from_tuple(moves_fen_tuple):
         Dictionary of extracted features
     """
     tuple_start_time = time.time()
+    # Set an overall timeout for the entire function
+    max_tuple_time = 12.0  # 12 seconds max (slightly longer than extract_move_features)
+
     try:
+        # Check if we can unpack the tuple
+        if not isinstance(moves_fen_tuple, tuple) or len(moves_fen_tuple) != 2:
+            return {
+                'tuple_error': 'Invalid tuple format',
+                'tuple_wrapper_time': time.time() - tuple_start_time
+            }
+
         moves_str, fen = moves_fen_tuple
+
+        # Call extract_move_features with a timeout
         features = extract_move_features(moves_str, fen)
+
+        # Check if we've exceeded our time limit
+        if time.time() - tuple_start_time > max_tuple_time:
+            features['tuple_timeout'] = True
+
         # Add wrapper timing information
         features['tuple_wrapper_time'] = time.time() - tuple_start_time
         return features
@@ -380,7 +556,41 @@ def extract_features(df, n_jobs=-1):
 
         logger.info("Processing position features")
         position_start_time = time.time()
+        last_progress_time = time.time()
+
+        # Add a maximum stall time before we consider the process hung
+        max_stall_time = 60.0  # 60 seconds max stall time
+
         for i, features in enumerate(track_progress(position_map, total=len(df), description="Position features", logger=logger)):
+            # Log if we're spending too much time on a single item (potential stall)
+            current_time = time.time()
+            time_since_last = current_time - last_progress_time
+
+            # Check for stalls
+            if time_since_last > 10.0:  # If more than 10 seconds since last progress
+                logger.warning(f"Position feature extraction stalled for {time_since_last:.2f}s on item {i}")
+
+                # If we've been stalled for too long, create a default feature set and continue
+                if time_since_last > max_stall_time:
+                    logger.error(f"Position feature extraction hung for {time_since_last:.2f}s on item {i}, using default features")
+                    # Create default features for this item
+                    features = {
+                        'error': 'Process hung, timed out after 60 seconds',
+                        'process_hung': True,
+                        'fen_length': len(df['FEN'].iloc[i]) if i < len(df) else 0
+                    }
+
+                if isinstance(features, dict):
+                    # Log any timeout or error information
+                    timeout_info = {k: v for k, v in features.items() if 'timeout' in k or 'error' in k or 'hung' in k}
+                    if timeout_info:
+                        logger.warning(f"Timeout/error information: {timeout_info}")
+
+                    # Log the FEN that caused the stall
+                    if i < len(df):
+                        logger.warning(f"Problematic FEN: {df['FEN'].iloc[i][:100]}...")
+
+            last_progress_time = current_time
             position_features.append(features)
 
             # Log progress at regular intervals
@@ -401,7 +611,43 @@ def extract_features(df, n_jobs=-1):
 
         logger.info("Processing move features")
         move_start_time = time.time()
+        last_move_progress_time = time.time()
+
+        # Add a maximum stall time before we consider the process hung
+        max_move_stall_time = 60.0  # 60 seconds max stall time
+
         for i, features in enumerate(track_progress(move_map, total=len(df), description="Move features", logger=logger)):
+            # Log if we're spending too much time on a single item (potential stall)
+            current_time = time.time()
+            time_since_last = current_time - last_move_progress_time
+
+            # Check for stalls
+            if time_since_last > 10.0:  # If more than 10 seconds since last progress
+                logger.warning(f"Move feature extraction stalled for {time_since_last:.2f}s on item {i}")
+
+                # If we've been stalled for too long, create a default feature set and continue
+                if time_since_last > max_move_stall_time:
+                    logger.error(f"Move feature extraction hung for {time_since_last:.2f}s on item {i}, using default features")
+                    # Create default features for this item
+                    features = {
+                        'error': 'Process hung, timed out after 60 seconds',
+                        'process_hung': True,
+                        'moves_str_length': len(df['Moves'].iloc[i]) if i < len(df) else 0,
+                        'fen_length': len(df['FEN'].iloc[i]) if i < len(df) else 0
+                    }
+
+                if isinstance(features, dict):
+                    # Log any timeout or error information
+                    timeout_info = {k: v for k, v in features.items() if 'timeout' in k or 'error' in k or 'hung' in k}
+                    if timeout_info:
+                        logger.warning(f"Timeout/error information: {timeout_info}")
+
+                    # Log the moves and FEN that caused the stall
+                    if i < len(df):
+                        logger.warning(f"Problematic Moves: {df['Moves'].iloc[i][:100]}...")
+                        logger.warning(f"Problematic FEN: {df['FEN'].iloc[i][:100]}...")
+
+            last_move_progress_time = current_time
             move_features.append(features)
 
             # Log progress at regular intervals
@@ -510,12 +756,12 @@ def extract_features(df, n_jobs=-1):
     features_df = features_df.fillna(0)
     logger.info(f"Filled missing values in {time.time() - fill_start_time:.2f}s")
 
-    # Remove timing columns to keep the feature set clean
-    timing_columns = [col for col in features_df.columns if any(col.endswith(suffix) for suffix in 
-                     ['_time', 'time_', 'error', 'wrapper_time'])]
-    if timing_columns:
-        logger.info(f"Removing {len(timing_columns)} timing and error columns from final features")
-        features_df = features_df.drop(columns=timing_columns)
+    # Remove timing, error, and timeout columns to keep the feature set clean
+    columns_to_remove = [col for col in features_df.columns if any(term in col for term in 
+                        ['_time', 'time_', 'error', 'timeout', 'hung', 'wrapper_'])]
+    if columns_to_remove:
+        logger.info(f"Removing {len(columns_to_remove)} timing, error, and diagnostic columns from final features")
+        features_df = features_df.drop(columns=columns_to_remove)
 
     logger.info(f"Extracted {features_df.shape[1]} features for {len(df)} samples")
     logger.info(f"Total feature extraction time: {time.time() - position_start_time:.2f}s")
