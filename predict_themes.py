@@ -40,6 +40,7 @@ from sklearn.preprocessing import MultiLabelBinarizer
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import f1_score, hamming_loss, roc_auc_score
 import lightgbm as lgb
+from chess_puzzle_rating.utils.progress import track_progress
 
 # Set up logging
 def setup_logging(log_file=None):
@@ -277,16 +278,16 @@ def extract_features(df, n_jobs=-1):
     # Use a single ProcessPoolExecutor for both feature extraction tasks
     with concurrent.futures.ProcessPoolExecutor(max_workers=n_jobs) as executor:
         # Extract position features
-        for features in tqdm(executor.map(extract_position_features, df['FEN']), 
-                            total=len(df), desc="Position features"):
+        position_map = executor.map(extract_position_features, df['FEN'])
+        for features in track_progress(position_map, total=len(df), description="Position features", logger=logger):
             position_features.append(features)
 
         # Extract move features
         logger.info("Extracting move features")
         move_features = []
 
-        for features in tqdm(executor.map(extract_move_features_from_tuple, moves_fen_tuples), 
-                            total=len(df), desc="Move features"):
+        move_map = executor.map(extract_move_features_from_tuple, moves_fen_tuples)
+        for features in track_progress(move_map, total=len(df), description="Move features", logger=logger):
             move_features.append(features)
 
     # Combine features
@@ -405,7 +406,7 @@ def train_theme_models(X, y_binary, theme_names, n_jobs=-1, min_auc=0.7, use_gpu
     theme_metrics = {}
 
     # Add progress bar for theme model training
-    for i, theme in enumerate(tqdm(theme_names, desc="Training theme models")):
+    for i, theme in enumerate(track_progress(theme_names, description="Training theme models", logger=logger)):
         logger.info(f"Training model for theme '{theme}' ({i+1}/{len(theme_names)})")
 
         # Get binary labels for this theme
@@ -501,7 +502,7 @@ def predict_themes(models, X, theme_names, confidence_threshold=0.7):
     confidence_scores = []
 
     # Make predictions for each sample
-    for i in tqdm(range(len(X)), desc="Predicting"):
+    for i in track_progress(range(len(X)), description="Predicting", logger=logger):
         sample = X.iloc[i:i+1]
         predicted_themes = []
         confidence_dict = {}
