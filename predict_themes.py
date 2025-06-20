@@ -21,8 +21,8 @@ Arguments:
     --test-file: Path to the test data file (default: /raid/sroziewski/chess/testing_data_cropped.csv)
     --output-file: Path to the output file (default: /raid/sroziewski/chess/testing_data_with_themes_cropped.csv)
     --confidence-threshold: Confidence threshold for theme prediction (default: 0.7)
-    --n-jobs: Number of jobs to run in parallel (always 1, parameter is ignored)
-    --use-gpu: Use GPU for training (always enabled, parameter is ignored)
+    --n-jobs: Number of jobs to run in parallel (default: -1, use half of available cores)
+    --use-gpu: Use GPU for training if available
     --log-file: Path to the log file (default: predict_themes_{timestamp}.log)
 """
 
@@ -251,7 +251,6 @@ def extract_features(df, n_jobs=-1):
         DataFrame with 'FEN' and 'Moves' columns
     n_jobs : int, optional
         Number of jobs to run in parallel, by default -1 (use all available cores)
-        Note: This parameter is ignored, and the function always uses 1 thread.
 
     Returns
     -------
@@ -261,9 +260,12 @@ def extract_features(df, n_jobs=-1):
     logger = logging.getLogger()
     logger.info("Extracting features from FEN and Moves")
 
-    # Force single-threaded execution
-    n_jobs = 1
-    logger.info("Using 1 worker process for feature extraction (single-threaded mode)")
+    # Determine the number of workers to use
+    if n_jobs <= 0:
+        # Use a reasonable number of processes (half of available CPUs)
+        n_jobs = max(1, (os.cpu_count() or 4) // 2)
+
+    logger.info(f"Using {n_jobs} worker processes for feature extraction")
 
     # Extract position features
     logger.info("Extracting position features")
@@ -369,12 +371,10 @@ def train_theme_models(X, y_binary, theme_names, n_jobs=-1, min_auc=0.7, use_gpu
         List of theme names
     n_jobs : int, optional
         Number of jobs to run in parallel, by default -1 (use all available cores)
-        Note: This parameter is ignored, and the function always uses 1 thread.
     min_auc : float, optional
         Minimum AUC score for a model to be considered good enough, by default 0.7
     use_gpu : bool, optional
         Whether to use GPU for training, by default False
-        Note: This parameter is ignored, and the function always uses GPU.
 
     Returns
     -------
@@ -386,13 +386,16 @@ def train_theme_models(X, y_binary, theme_names, n_jobs=-1, min_auc=0.7, use_gpu
     logger = logging.getLogger()
     logger.info("Training theme models")
 
-    # Force single-threaded execution
-    n_jobs = 1
-    logger.info("Using 1 thread for model training (single-threaded mode)")
+    # Determine the number of workers to use
+    if n_jobs <= 0:
+        # Use a reasonable number of threads (half of available CPUs)
+        n_jobs = max(1, (os.cpu_count() or 4) // 2)
 
-    # Force GPU usage
-    use_gpu = True
-    logger.info("GPU training enabled (forced)")
+    logger.info(f"Using {n_jobs} threads for model training")
+
+    # Enable GPU if requested
+    if use_gpu:
+        logger.info("GPU training enabled")
 
     # Split data for training and validation
     X_train, X_val, y_train, y_val = train_test_split(X, y_binary, test_size=0.2, random_state=42)
@@ -401,7 +404,8 @@ def train_theme_models(X, y_binary, theme_names, n_jobs=-1, min_auc=0.7, use_gpu
     models = {}
     theme_metrics = {}
 
-    for i, theme in enumerate(theme_names):
+    # Add progress bar for theme model training
+    for i, theme in enumerate(tqdm(theme_names, desc="Training theme models")):
         logger.info(f"Training model for theme '{theme}' ({i+1}/{len(theme_names)})")
 
         # Get binary labels for this theme
@@ -532,10 +536,10 @@ def main():
                         help='Path to the output file')
     parser.add_argument('--confidence-threshold', type=float, default=0.7,
                         help='Confidence threshold for theme prediction')
-    parser.add_argument('--n-jobs', type=int, default=1,
-                        help='Number of jobs to run in parallel (always 1, parameter is ignored)')
+    parser.add_argument('--n-jobs', type=int, default=-1,
+                        help='Number of jobs to run in parallel (default: -1, use half of available cores)')
     parser.add_argument('--use-gpu', action='store_true',
-                        help='Use GPU for training (always enabled, parameter is ignored)')
+                        help='Use GPU for training if available')
     parser.add_argument('--log-file', type=str, default=None,
                         help='Path to the log file')
 
@@ -545,9 +549,12 @@ def main():
     logger = setup_logging(args.log_file)
     logger.info("Starting theme prediction")
 
-    # Force single-threaded execution
-    args.n_jobs = 1
-    logger.info("Using 1 worker process for all tasks (single-threaded mode)")
+    # Determine the number of workers to use
+    if args.n_jobs <= 0:
+        # Use a reasonable number of processes (half of available CPUs)
+        args.n_jobs = max(1, (os.cpu_count() or 4) // 2)
+
+    logger.info(f"Using {args.n_jobs} worker processes for parallel tasks")
 
     try:
         # Load training data
@@ -575,7 +582,7 @@ def main():
 
         # Train theme models
         logger.info("Training theme models")
-        models, theme_metrics = train_theme_models(train_features, y_binary, theme_names, n_jobs=args.n_jobs, use_gpu=True)
+        models, theme_metrics = train_theme_models(train_features, y_binary, theme_names, n_jobs=args.n_jobs, use_gpu=args.use_gpu)
 
         # Extract features from test data
         logger.info("Extracting features from test data")
