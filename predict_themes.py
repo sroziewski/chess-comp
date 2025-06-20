@@ -260,22 +260,32 @@ def extract_features(df, n_jobs=-1):
     logger = logging.getLogger()
     logger.info("Extracting features from FEN and Moves")
 
+    # Determine the number of workers to use
+    if n_jobs <= 0:
+        # Use a reasonable number of processes (half of available CPUs)
+        import os
+        n_jobs = max(1, (os.cpu_count() or 4) // 2)
+
+    logger.info(f"Using {n_jobs} worker processes for feature extraction")
+
     # Extract position features
     logger.info("Extracting position features")
     position_features = []
 
-    with concurrent.futures.ProcessPoolExecutor(max_workers=n_jobs) as executor:
-        for features in tqdm(executor.map(extract_position_features, df['FEN']), total=len(df), desc="Position features"):
-            position_features.append(features)
-
-    # Extract move features
-    logger.info("Extracting move features")
-    move_features = []
-
-    # Create a list of (moves_str, fen) tuples
+    # Create a list of (moves_str, fen) tuples for move features
     moves_fen_tuples = list(zip(df['Moves'], df['FEN']))
 
+    # Use a single ProcessPoolExecutor for both feature extraction tasks
     with concurrent.futures.ProcessPoolExecutor(max_workers=n_jobs) as executor:
+        # Extract position features
+        for features in tqdm(executor.map(extract_position_features, df['FEN']), 
+                            total=len(df), desc="Position features"):
+            position_features.append(features)
+
+        # Extract move features
+        logger.info("Extracting move features")
+        move_features = []
+
         for features in tqdm(executor.map(extract_move_features_from_tuple, moves_fen_tuples), 
                             total=len(df), desc="Move features"):
             move_features.append(features)
@@ -376,6 +386,14 @@ def train_theme_models(X, y_binary, theme_names, n_jobs=-1, min_auc=0.7, use_gpu
     """
     logger = logging.getLogger()
     logger.info("Training theme models")
+
+    # Determine the number of workers to use
+    if n_jobs <= 0:
+        # Use a reasonable number of threads (half of available CPUs)
+        import os
+        n_jobs = max(1, (os.cpu_count() or 4) // 2)
+
+    logger.info(f"Using {n_jobs} threads for model training")
 
     # Split data for training and validation
     X_train, X_val, y_train, y_val = train_test_split(X, y_binary, test_size=0.2, random_state=42)
@@ -516,7 +534,7 @@ def main():
     parser.add_argument('--confidence-threshold', type=float, default=0.7,
                         help='Confidence threshold for theme prediction')
     parser.add_argument('--n-jobs', type=int, default=-1,
-                        help='Number of jobs to run in parallel')
+                        help='Number of jobs to run in parallel (default: -1, use half of available cores)')
     parser.add_argument('--use-gpu', action='store_true',
                         help='Use GPU for training (if available)')
     parser.add_argument('--log-file', type=str, default=None,
@@ -527,6 +545,14 @@ def main():
     # Set up logging
     logger = setup_logging(args.log_file)
     logger.info("Starting theme prediction")
+
+    # Determine the number of workers to use
+    if args.n_jobs <= 0:
+        # Use a reasonable number of processes (half of available CPUs)
+        import os
+        args.n_jobs = max(1, (os.cpu_count() or 4) // 2)
+
+    logger.info(f"Using {args.n_jobs} worker processes for parallel tasks")
 
     try:
         # Load training data
