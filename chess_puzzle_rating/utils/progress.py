@@ -255,7 +255,7 @@ class ProgressTracker:
         self.current = 0
 
         # Initialize tqdm progress bar
-        self.progress_bar = tqdm(total=total, desc=description, unit="steps")
+        self.progress_bar = tqdm(total=total, desc=description, unit="steps", force=True)
 
         # Log the start
         self.logger.info(f"Started {description} with {total} steps")
