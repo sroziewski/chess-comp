@@ -27,7 +27,7 @@ def get_custom_logger(log_file=None):
         timestamp = time.strftime("%Y%m%d_%H%M%S")
         log_file = f"stockfish_features_{timestamp}.log"
 
-    return setup_logging(log_file=log_file)
+    return setup_logging(log_file_name=log_file)
 
 @log_time(name="analyze_position")
 def analyze_position(fen, engine_path, depth=20, time_limit=1.0):

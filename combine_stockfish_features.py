@@ -24,7 +24,7 @@ def get_custom_logger(log_file=None):
         timestamp = time.strftime("%Y%m%d_%H%M%S")
         log_file = f"combine_features_{timestamp}.log"
 
-    return setup_logging(log_file=log_file)
+    return setup_logging(log_file_name=log_file)
 
 @log_time(name="convert_uci_to_pgn")
 def convert_uci_to_pgn(uci_move, fen):
