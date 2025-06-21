@@ -527,12 +527,9 @@ def extract_features(df, n_jobs=-1):
         logger.info(f"Sample FEN: {df['FEN'].iloc[0]}")
         logger.info(f"Sample Moves: {df['Moves'].iloc[0]}")
 
-    # Determine the number of workers to use
-    if n_jobs <= 0:
-        # Use a reasonable number of processes (half of available CPUs)
-        n_jobs = max(1, (os.cpu_count() or 4) // 2)
-
-    logger.info(f"Using {n_jobs} worker processes for feature extraction")
+    # Force sequential processing
+    n_jobs = 1
+    logger.info("Using sequential processing for feature extraction")
 
     # Extract position features
     logger.info("Extracting position features")
@@ -543,121 +540,121 @@ def extract_features(df, n_jobs=-1):
     logger.info(f"Processing in batches of ~{batch_size} samples")
 
     # Create a list of (moves_str, fen) tuples for move features
-    logger.info("Preparing move-FEN tuples for parallel processing")
+    logger.info("Preparing move-FEN tuples for sequential processing")
     moves_fen_tuples = list(zip(df['Moves'], df['FEN']))
     logger.info(f"Created {len(moves_fen_tuples)} move-FEN tuples")
 
-    # Use a single ProcessPoolExecutor for both feature extraction tasks
-    logger.info("Starting parallel feature extraction")
-    with concurrent.futures.ProcessPoolExecutor(max_workers=n_jobs) as executor:
-        # Extract position features
-        logger.info("Submitting position feature extraction tasks")
-        position_map = executor.map(extract_position_features, df['FEN'])
+    # Use sequential processing for feature extraction
+    logger.info("Starting sequential feature extraction")
 
-        logger.info("Processing position features")
-        position_start_time = time.time()
-        last_progress_time = time.time()
+    # Extract position features
+    logger.info("Processing position features sequentially")
+    position_start_time = time.time()
+    last_progress_time = time.time()
 
-        # Add a maximum stall time before we consider the process hung
-        max_stall_time = 60.0  # 60 seconds max stall time
+    # Add a maximum stall time before we consider the process hung
+    max_stall_time = 60.0  # 60 seconds max stall time
 
-        for i, features in enumerate(track_progress(position_map, total=len(df), description="Position features", logger=logger)):
-            # Log if we're spending too much time on a single item (potential stall)
-            current_time = time.time()
-            time_since_last = current_time - last_progress_time
+    for i in track_progress(range(len(df)), total=len(df), description="Position features", logger=logger):
+        # Extract features for this position
+        features = extract_position_features(df['FEN'].iloc[i])
 
-            # Check for stalls
-            if time_since_last > 10.0:  # If more than 10 seconds since last progress
-                logger.warning(f"Position feature extraction stalled for {time_since_last:.2f}s on item {i}")
+        # Log if we're spending too much time on a single item (potential stall)
+        current_time = time.time()
+        time_since_last = current_time - last_progress_time
 
-                # If we've been stalled for too long, create a default feature set and continue
-                if time_since_last > max_stall_time:
-                    logger.error(f"Position feature extraction hung for {time_since_last:.2f}s on item {i}, using default features")
-                    # Create default features for this item
-                    features = {
-                        'error': 'Process hung, timed out after 60 seconds',
-                        'process_hung': True,
-                        'fen_length': len(df['FEN'].iloc[i]) if i < len(df) else 0
-                    }
+        # Check for stalls
+        if time_since_last > 10.0:  # If more than 10 seconds since last progress
+            logger.warning(f"Position feature extraction stalled for {time_since_last:.2f}s on item {i}")
 
-                if isinstance(features, dict):
-                    # Log any timeout or error information
-                    timeout_info = {k: v for k, v in features.items() if 'timeout' in k or 'error' in k or 'hung' in k}
-                    if timeout_info:
-                        logger.warning(f"Timeout/error information: {timeout_info}")
+            # If we've been stalled for too long, create a default feature set and continue
+            if time_since_last > max_stall_time:
+                logger.error(f"Position feature extraction hung for {time_since_last:.2f}s on item {i}, using default features")
+                # Create default features for this item
+                features = {
+                    'error': 'Process hung, timed out after 60 seconds',
+                    'process_hung': True,
+                    'fen_length': len(df['FEN'].iloc[i]) if i < len(df) else 0
+                }
 
-                    # Log the FEN that caused the stall
-                    if i < len(df):
-                        logger.warning(f"Problematic FEN: {df['FEN'].iloc[i][:100]}...")
+            if isinstance(features, dict):
+                # Log any timeout or error information
+                timeout_info = {k: v for k, v in features.items() if 'timeout' in k or 'error' in k or 'hung' in k}
+                if timeout_info:
+                    logger.warning(f"Timeout/error information: {timeout_info}")
 
-            last_progress_time = current_time
-            position_features.append(features)
+                # Log the FEN that caused the stall
+                if i < len(df):
+                    logger.warning(f"Problematic FEN: {df['FEN'].iloc[i][:100]}...")
 
-            # Log progress at regular intervals
-            if (i + 1) % batch_size == 0 or i == len(df) - 1:
-                elapsed = time.time() - position_start_time
-                logger.info(f"Processed {i+1}/{len(df)} position features in {elapsed:.2f}s ({(i+1)/elapsed:.2f} samples/s)")
+        last_progress_time = current_time
+        position_features.append(features)
 
-                # Log feature counts to help identify potential issues
-                feature_counts = sum(len(f) for f in position_features[-batch_size:])
-                logger.info(f"Last batch extracted {feature_counts} position features (avg: {feature_counts/min(batch_size, i+1):.1f} per sample)")
+        # Log progress at regular intervals
+        if (i + 1) % batch_size == 0 or i == len(df) - 1:
+            elapsed = time.time() - position_start_time
+            logger.info(f"Processed {i+1}/{len(df)} position features in {elapsed:.2f}s ({(i+1)/elapsed:.2f} samples/s)")
 
-        # Extract move features
-        logger.info("Extracting move features")
-        move_features = []
+            # Log feature counts to help identify potential issues
+            feature_counts = sum(len(f) for f in position_features[-min(batch_size, i+1):])
+            logger.info(f"Last batch extracted {feature_counts} position features (avg: {feature_counts/min(batch_size, i+1):.1f} per sample)")
 
-        logger.info("Submitting move feature extraction tasks")
-        move_map = executor.map(extract_move_features_from_tuple, moves_fen_tuples)
+    # Extract move features
+    logger.info("Extracting move features")
+    move_features = []
 
-        logger.info("Processing move features")
-        move_start_time = time.time()
-        last_move_progress_time = time.time()
+    logger.info("Processing move features sequentially")
+    move_start_time = time.time()
+    last_move_progress_time = time.time()
 
-        # Add a maximum stall time before we consider the process hung
-        max_move_stall_time = 60.0  # 60 seconds max stall time
+    # Add a maximum stall time before we consider the process hung
+    max_move_stall_time = 60.0  # 60 seconds max stall time
 
-        for i, features in enumerate(track_progress(move_map, total=len(df), description="Move features", logger=logger)):
-            # Log if we're spending too much time on a single item (potential stall)
-            current_time = time.time()
-            time_since_last = current_time - last_move_progress_time
+    for i in track_progress(range(len(moves_fen_tuples)), total=len(moves_fen_tuples), description="Move features", logger=logger):
+        # Extract features for this move
+        features = extract_move_features_from_tuple(moves_fen_tuples[i])
 
-            # Check for stalls
-            if time_since_last > 10.0:  # If more than 10 seconds since last progress
-                logger.warning(f"Move feature extraction stalled for {time_since_last:.2f}s on item {i}")
+        # Log if we're spending too much time on a single item (potential stall)
+        current_time = time.time()
+        time_since_last = current_time - last_move_progress_time
 
-                # If we've been stalled for too long, create a default feature set and continue
-                if time_since_last > max_move_stall_time:
-                    logger.error(f"Move feature extraction hung for {time_since_last:.2f}s on item {i}, using default features")
-                    # Create default features for this item
-                    features = {
-                        'error': 'Process hung, timed out after 60 seconds',
-                        'process_hung': True,
-                        'moves_str_length': len(df['Moves'].iloc[i]) if i < len(df) else 0,
-                        'fen_length': len(df['FEN'].iloc[i]) if i < len(df) else 0
-                    }
+        # Check for stalls
+        if time_since_last > 10.0:  # If more than 10 seconds since last progress
+            logger.warning(f"Move feature extraction stalled for {time_since_last:.2f}s on item {i}")
 
-                if isinstance(features, dict):
-                    # Log any timeout or error information
-                    timeout_info = {k: v for k, v in features.items() if 'timeout' in k or 'error' in k or 'hung' in k}
-                    if timeout_info:
-                        logger.warning(f"Timeout/error information: {timeout_info}")
+            # If we've been stalled for too long, create a default feature set and continue
+            if time_since_last > max_move_stall_time:
+                logger.error(f"Move feature extraction hung for {time_since_last:.2f}s on item {i}, using default features")
+                # Create default features for this item
+                features = {
+                    'error': 'Process hung, timed out after 60 seconds',
+                    'process_hung': True,
+                    'moves_str_length': len(df['Moves'].iloc[i]) if i < len(df) else 0,
+                    'fen_length': len(df['FEN'].iloc[i]) if i < len(df) else 0
+                }
 
-                    # Log the moves and FEN that caused the stall
-                    if i < len(df):
-                        logger.warning(f"Problematic Moves: {df['Moves'].iloc[i][:100]}...")
-                        logger.warning(f"Problematic FEN: {df['FEN'].iloc[i][:100]}...")
+            if isinstance(features, dict):
+                # Log any timeout or error information
+                timeout_info = {k: v for k, v in features.items() if 'timeout' in k or 'error' in k or 'hung' in k}
+                if timeout_info:
+                    logger.warning(f"Timeout/error information: {timeout_info}")
 
-            last_move_progress_time = current_time
-            move_features.append(features)
+                # Log the moves and FEN that caused the stall
+                if i < len(df):
+                    logger.warning(f"Problematic Moves: {df['Moves'].iloc[i][:100]}...")
+                    logger.warning(f"Problematic FEN: {df['FEN'].iloc[i][:100]}...")
 
-            # Log progress at regular intervals
-            if (i + 1) % batch_size == 0 or i == len(df) - 1:
-                elapsed = time.time() - move_start_time
-                logger.info(f"Processed {i+1}/{len(df)} move features in {elapsed:.2f}s ({(i+1)/elapsed:.2f} samples/s)")
+        last_move_progress_time = current_time
+        move_features.append(features)
 
-                # Log feature counts to help identify potential issues
-                feature_counts = sum(len(f) for f in move_features[-batch_size:])
-                logger.info(f"Last batch extracted {feature_counts} move features (avg: {feature_counts/min(batch_size, i+1):.1f} per sample)")
+        # Log progress at regular intervals
+        if (i + 1) % batch_size == 0 or i == len(df) - 1:
+            elapsed = time.time() - move_start_time
+            logger.info(f"Processed {i+1}/{len(df)} move features in {elapsed:.2f}s ({(i+1)/elapsed:.2f} samples/s)")
+
+            # Log feature counts to help identify potential issues
+            feature_counts = sum(len(f) for f in move_features[-min(batch_size, i+1):])
+            logger.info(f"Last batch extracted {feature_counts} move features (avg: {feature_counts/min(batch_size, i+1):.1f} per sample)")
 
     # Analyze timing data from position features
     logger.info("Analyzing position feature extraction timing")
@@ -830,6 +827,7 @@ def train_theme_models(X, y_binary, theme_names, n_jobs=-1, min_auc=0.7, use_gpu
         List of theme names
     n_jobs : int, optional
         Number of jobs to run in parallel, by default -1 (use all available cores)
+        Note: This parameter is ignored as we're using sequential processing
     min_auc : float, optional
         Minimum AUC score for a model to be considered good enough, by default 0.7
     use_gpu : bool, optional
@@ -843,14 +841,12 @@ def train_theme_models(X, y_binary, theme_names, n_jobs=-1, min_auc=0.7, use_gpu
         Dictionary of model metrics, one for each theme
     """
     logger = logging.getLogger()
-    logger.info("Training theme models")
+    logger.info("Training theme models sequentially")
 
-    # Determine the number of workers to use
-    if n_jobs <= 0:
-        # Use a reasonable number of threads (half of available CPUs)
-        n_jobs = max(1, (os.cpu_count() or 4) // 2)
+    # Force sequential processing
+    n_jobs = 1
 
-    logger.info(f"Using {n_jobs} threads for model training")
+    logger.info("Using sequential processing for model training")
 
     # Enable GPU if requested
     if use_gpu:
@@ -893,7 +889,10 @@ def train_theme_models(X, y_binary, theme_names, n_jobs=-1, min_auc=0.7, use_gpu
             params.update({
                 'device': 'gpu',
                 'gpu_platform_id': 0,
-                'gpu_device_id': 0
+                'gpu_device_id': 0,
+                'tree_learner': 'gpu',
+                'force_col_wise': True,
+                'verbosity': -1
             })
 
         model = lgb.LGBMClassifier(**params)
@@ -995,10 +994,10 @@ def main():
                         help='Path to the output file')
     parser.add_argument('--confidence-threshold', type=float, default=0.7,
                         help='Confidence threshold for theme prediction')
-    parser.add_argument('--n-jobs', type=int, default=-1,
-                        help='Number of jobs to run in parallel (default: -1, use half of available cores)')
-    parser.add_argument('--use-gpu', action='store_true',
-                        help='Use GPU for training if available')
+    parser.add_argument('--n-jobs', type=int, default=1,
+                        help='Number of jobs to run in parallel (default: 1, sequential processing)')
+    parser.add_argument('--no-gpu', action='store_true',
+                        help='Disable GPU for training (GPU is used by default)')
     parser.add_argument('--log-file', type=str, default=None,
                         help='Path to the log file')
 
@@ -1008,12 +1007,9 @@ def main():
     logger = setup_logging(args.log_file)
     logger.info("Starting theme prediction")
 
-    # Determine the number of workers to use
-    if args.n_jobs <= 0:
-        # Use a reasonable number of processes (half of available CPUs)
-        args.n_jobs = max(1, (os.cpu_count() or 4) // 2)
-
-    logger.info(f"Using {args.n_jobs} worker processes for parallel tasks")
+    # Force sequential processing
+    args.n_jobs = 1
+    logger.info("Using sequential processing (no parallelism)")
 
     try:
         # Load training data
@@ -1041,7 +1037,7 @@ def main():
 
         # Train theme models
         logger.info("Training theme models")
-        models, theme_metrics = train_theme_models(train_features, y_binary, theme_names, n_jobs=args.n_jobs, use_gpu=args.use_gpu)
+        models, theme_metrics = train_theme_models(train_features, y_binary, theme_names, n_jobs=args.n_jobs, use_gpu=not args.no_gpu)
 
         # Extract features from test data
         logger.info("Extracting features from test data")
