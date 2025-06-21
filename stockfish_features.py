@@ -6,18 +6,18 @@ import chess.engine
 import logging
 import argparse
 import time
-from tqdm import tqdm
 from concurrent.futures import ProcessPoolExecutor
+from chess_puzzle_rating.utils.progress import setup_logging, log_time, track_progress
 
-def setup_logging(log_file=None):
+def get_custom_logger(log_file=None):
     """
     Set up logging configuration.
-    
+
     Parameters
     ----------
     log_file : str, optional
         Path to log file, by default None
-    
+
     Returns
     -------
     logging.Logger
@@ -26,21 +26,14 @@ def setup_logging(log_file=None):
     if log_file is None:
         timestamp = time.strftime("%Y%m%d_%H%M%S")
         log_file = f"stockfish_features_{timestamp}.log"
-    
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(levelname)s - %(message)s',
-        handlers=[
-            logging.FileHandler(log_file),
-            logging.StreamHandler()
-        ]
-    )
-    return logging.getLogger()
 
+    return setup_logging(log_file=log_file)
+
+@log_time(name="analyze_position")
 def analyze_position(fen, engine_path, depth=20, time_limit=1.0):
     """
     Analyze a chess position using Stockfish.
-    
+
     Parameters
     ----------
     fen : str
@@ -51,7 +44,7 @@ def analyze_position(fen, engine_path, depth=20, time_limit=1.0):
         Maximum depth for analysis, by default 20
     time_limit : float, optional
         Time limit for analysis in seconds, by default 1.0
-    
+
     Returns
     -------
     dict
@@ -60,16 +53,16 @@ def analyze_position(fen, engine_path, depth=20, time_limit=1.0):
     try:
         # Initialize the engine
         engine = chess.engine.SimpleEngine.popen_uci(engine_path)
-        
+
         # Set up the board
         board = chess.Board(fen)
-        
+
         # Set up analysis options
         limit = chess.engine.Limit(depth=depth, time=time_limit)
-        
+
         # Analyze the position
         info = engine.analyse(board, limit)
-        
+
         # Extract features
         result = {
             'engine_cp_score': None,
@@ -77,7 +70,7 @@ def analyze_position(fen, engine_path, depth=20, time_limit=1.0):
             'engine_top_move_uci': None,
             'engine_pv_length': 0,
             'engine_analysis_depth': info.get('depth', 0),
-            'engine_multipv_count': len(info.get('multipv', [])) if 'multipv' in info else 1,
+            'engine_multipv_count': len(info.get('multipv', [])) if 'multipv' in info and isinstance(info.get('multipv'), (list, tuple)) else 1,
             'engine_nodes': info.get('nodes', 0),
             'engine_nps': info.get('nps', 0),
             'engine_time': info.get('time', 0),
@@ -85,7 +78,7 @@ def analyze_position(fen, engine_path, depth=20, time_limit=1.0):
             'engine_hashfull': info.get('hashfull', 0),
             'engine_selective_depth': info.get('seldepth', 0)
         }
-        
+
         # Extract score
         if 'score' in info:
             score = info['score'].relative
@@ -93,38 +86,40 @@ def analyze_position(fen, engine_path, depth=20, time_limit=1.0):
                 result['engine_mate_score'] = score.mate()
             else:
                 result['engine_cp_score'] = score.score()
-        
+
         # Extract PV (Principal Variation)
         if 'pv' in info:
             pv = info['pv']
-            result['engine_pv_length'] = len(pv)
-            if pv:
-                result['engine_top_move_uci'] = pv[0].uci()
-                
-                # Additional PV-based features
-                if len(pv) > 1:
-                    result['engine_second_move_uci'] = pv[1].uci()
-                if len(pv) > 2:
-                    result['engine_third_move_uci'] = pv[2].uci()
-                
-                # Calculate move characteristics for top move
-                top_move = pv[0]
-                result['engine_top_move_is_capture'] = int(board.is_capture(top_move))
-                result['engine_top_move_is_check'] = int(board.gives_check(top_move))
-                result['engine_top_move_is_promotion'] = int(top_move.promotion is not None)
-                
-                # Piece type of the moving piece
-                from_square = top_move.from_square
-                piece = board.piece_at(from_square)
-                if piece:
-                    result[f'engine_top_move_piece_{piece.piece_type}'] = 1
-                    result['engine_top_move_piece_color'] = int(piece.color)
-        
+            # Ensure pv is a list or tuple before using len()
+            if isinstance(pv, (list, tuple)):
+                result['engine_pv_length'] = len(pv)
+                if pv:
+                    result['engine_top_move_uci'] = pv[0].uci()
+
+                    # Additional PV-based features
+                    if len(pv) > 1:
+                        result['engine_second_move_uci'] = pv[1].uci()
+                    if len(pv) > 2:
+                        result['engine_third_move_uci'] = pv[2].uci()
+
+                    # Calculate move characteristics for top move
+                    top_move = pv[0]
+                    result['engine_top_move_is_capture'] = int(board.is_capture(top_move))
+                    result['engine_top_move_is_check'] = int(board.gives_check(top_move))
+                    result['engine_top_move_is_promotion'] = int(top_move.promotion is not None)
+
+                    # Piece type of the moving piece
+                    from_square = top_move.from_square
+                    piece = board.piece_at(from_square)
+                    if piece:
+                        result[f'engine_top_move_piece_{piece.piece_type}'] = 1
+                        result['engine_top_move_piece_color'] = int(piece.color)
+
         # Close the engine
         engine.quit()
-        
+
         return result
-    
+
     except Exception as e:
         logging.error(f"Error analyzing position {fen}: {str(e)}")
         return {
@@ -139,12 +134,12 @@ def analyze_position(fen, engine_path, depth=20, time_limit=1.0):
 def process_position(args):
     """
     Process a single position for parallel execution.
-    
+
     Parameters
     ----------
     args : tuple
         Tuple containing (idx, fen, engine_path, depth, time_limit)
-    
+
     Returns
     -------
     tuple
@@ -154,10 +149,11 @@ def process_position(args):
     features = analyze_position(fen, engine_path, depth, time_limit)
     return idx, features
 
+@log_time(name="extract_stockfish_features")
 def extract_stockfish_features(df, engine_path, depth=20, time_limit=1.0, n_jobs=1):
     """
     Extract Stockfish features for all positions in the DataFrame.
-    
+
     Parameters
     ----------
     df : pandas.DataFrame
@@ -170,7 +166,7 @@ def extract_stockfish_features(df, engine_path, depth=20, time_limit=1.0, n_jobs
         Time limit for analysis in seconds, by default 1.0
     n_jobs : int, optional
         Number of parallel jobs, by default 1
-    
+
     Returns
     -------
     pandas.DataFrame
@@ -180,32 +176,41 @@ def extract_stockfish_features(df, engine_path, depth=20, time_limit=1.0, n_jobs
     logger.info(f"Extracting Stockfish features for {len(df)} positions")
     logger.info(f"Using Stockfish engine at {engine_path}")
     logger.info(f"Analysis parameters: depth={depth}, time_limit={time_limit}s, n_jobs={n_jobs}")
-    
+
     # Prepare arguments for parallel processing
     args_list = [(idx, row['FEN'], engine_path, depth, time_limit) for idx, row in df.iterrows()]
-    
+
     # Process positions
     features_dict = {}
-    
+
     if n_jobs > 1:
         logger.info(f"Using parallel processing with {n_jobs} workers")
         with ProcessPoolExecutor(max_workers=n_jobs) as executor:
-            for idx, features in tqdm(executor.map(process_position, args_list), total=len(args_list), desc="Analyzing positions"):
+            for idx, features in track_progress(
+                executor.map(process_position, args_list), 
+                total=len(args_list), 
+                description="Analyzing positions (parallel)",
+                logger=logger
+            ):
                 features_dict[idx] = features
     else:
         logger.info("Using sequential processing")
-        for args in tqdm(args_list, desc="Analyzing positions"):
+        for args in track_progress(
+            args_list, 
+            description="Analyzing positions",
+            logger=logger
+        ):
             idx, features = process_position(args)
             features_dict[idx] = features
-    
+
     # Convert to DataFrame
     features_df = pd.DataFrame.from_dict(features_dict, orient='index')
-    
+
     # Fill missing values
     features_df = features_df.fillna(0)
-    
+
     logger.info(f"Extracted {features_df.shape[1]} Stockfish features")
-    
+
     return features_df
 
 def main():
@@ -222,25 +227,29 @@ def main():
     parser.add_argument("--depth", type=int, default=20, help="Maximum depth for analysis")
     parser.add_argument("--time_limit", type=float, default=1.0, help="Time limit for analysis in seconds")
     parser.add_argument("--n_jobs", type=int, default=1, help="Number of parallel jobs")
-    
+
     args = parser.parse_args()
-    
+
     # Set up logging
-    logger = setup_logging()
-    
+    logger = get_custom_logger()
+
     logger.info("Starting Stockfish feature extraction")
-    
+
     try:
         # Load training data
         logger.info(f"Loading training data from {args.train_file}")
+        start_time = time.time()
         train_df = pd.read_csv(args.train_file)
-        logger.info(f"Loaded {len(train_df)} training samples")
-        
+        load_time = time.time() - start_time
+        logger.info(f"Loaded {len(train_df)} training samples in {load_time:.2f}s ({len(train_df)/load_time:.1f} samples/s)")
+
         # Load test data
         logger.info(f"Loading test data from {args.test_file}")
+        start_time = time.time()
         test_df = pd.read_csv(args.test_file)
-        logger.info(f"Loaded {len(test_df)} test samples")
-        
+        load_time = time.time() - start_time
+        logger.info(f"Loaded {len(test_df)} test samples in {load_time:.2f}s ({len(test_df)/load_time:.1f} samples/s)")
+
         # Extract Stockfish features for training data
         logger.info("Extracting Stockfish features for training data")
         train_features = extract_stockfish_features(
@@ -250,11 +259,14 @@ def main():
             time_limit=args.time_limit, 
             n_jobs=args.n_jobs
         )
-        
+
         # Save training features
         logger.info(f"Saving training features to {args.output_train}")
+        start_time = time.time()
         train_features.to_csv(args.output_train)
-        
+        save_time = time.time() - start_time
+        logger.info(f"Saved {len(train_features)} training samples in {save_time:.2f}s ({len(train_features)/save_time:.1f} samples/s)")
+
         # Extract Stockfish features for test data
         logger.info("Extracting Stockfish features for test data")
         test_features = extract_stockfish_features(
@@ -264,13 +276,20 @@ def main():
             time_limit=args.time_limit, 
             n_jobs=args.n_jobs
         )
-        
+
         # Save test features
         logger.info(f"Saving test features to {args.output_test}")
+        start_time = time.time()
         test_features.to_csv(args.output_test)
-        
+        save_time = time.time() - start_time
+        logger.info(f"Saved {len(test_features)} test samples in {save_time:.2f}s ({len(test_features)/save_time:.1f} samples/s)")
+
+        # Log overall statistics
+        total_samples = len(train_df) + len(test_df)
+        logger.info(f"Processed a total of {total_samples} samples")
+        logger.info(f"Extracted {train_features.shape[1]} features per sample")
         logger.info("Stockfish feature extraction completed successfully")
-        
+
     except Exception as e:
         logger.error(f"Error during Stockfish feature extraction: {str(e)}")
         raise
