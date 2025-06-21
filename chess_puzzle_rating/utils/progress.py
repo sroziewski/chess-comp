@@ -114,7 +114,7 @@ def get_logger() -> logging.Logger:
     return logger
 
 
-def log_time(func=None, *, name: Optional[str] = None, logger: Optional[logging.Logger] = None):
+def log_time(func=None, *, name: Optional[str] = None, logger: Optional[logging.Logger] = None, log_interval: int = 1):
     """
     Decorator to log the execution time of a function.
 
@@ -126,6 +126,8 @@ def log_time(func=None, *, name: Optional[str] = None, logger: Optional[logging.
         Name to use in the log message, by default None (uses function name)
     logger : logging.Logger, optional
         Logger to use, by default None (uses default logger)
+    log_interval : int, optional
+        Log only once every N calls, by default 1 (log every call)
 
     Returns
     -------
@@ -133,14 +135,24 @@ def log_time(func=None, *, name: Optional[str] = None, logger: Optional[logging.
         Decorated function
     """
     def decorator(func):
+        # Counter to track number of calls
+        call_count = 0
+
         @wraps(func)
         def wrapper(*args, **kwargs):
-            nonlocal logger
+            nonlocal logger, call_count
             if logger is None:
                 logger = get_logger()
 
             func_name = name or func.__name__
-            logger.info(f"Starting {func_name}...")
+            call_count += 1
+
+            # Only log if this is the first call or if we've reached the log interval
+            should_log = (call_count == 1) or (call_count % log_interval == 0)
+
+            if should_log:
+                logger.info(f"Starting {func_name}... (call {call_count})")
+
             start_time = time.time()
 
             try:
@@ -148,8 +160,9 @@ def log_time(func=None, *, name: Optional[str] = None, logger: Optional[logging.
                 end_time = time.time()
                 elapsed_time = end_time - start_time
 
-                # Log the execution time
-                logger.info(f"Completed {func_name} in {elapsed_time:.2f} seconds")
+                # Log the execution time only if we should log
+                if should_log:
+                    logger.info(f"Completed {func_name} in {elapsed_time:.2f} seconds (call {call_count})")
 
                 # Store the metric
                 with _metrics_lock:
@@ -161,12 +174,14 @@ def log_time(func=None, *, name: Optional[str] = None, logger: Optional[logging.
 
                     _metrics_store['execution_times'][func_name].append({
                         'timestamp': datetime.datetime.now().isoformat(),
-                        'elapsed_time': elapsed_time
+                        'elapsed_time': elapsed_time,
+                        'call_count': call_count
                     })
 
                 return result
             except Exception as e:
-                logger.error(f"Error in {func_name}: {str(e)}")
+                if should_log:
+                    logger.error(f"Error in {func_name}: {str(e)} (call {call_count})")
                 raise
 
         return wrapper

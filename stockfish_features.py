@@ -29,7 +29,7 @@ def get_custom_logger(log_file=None):
 
     return setup_logging(log_file_name=log_file)
 
-@log_time(name="analyze_position")
+@log_time(name="analyze_position", log_interval=100000)
 def analyze_position(fen, engine_path, depth=20, time_limit=1.0):
     """
     Analyze a chess position using Stockfish.
