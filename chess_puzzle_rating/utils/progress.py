@@ -281,14 +281,14 @@ class ProgressTracker:
         # Initialize tqdm progress bar
         # Try to use terminal-specific tqdm first, which is more reliable in terminal environments
         try:
-            self.progress_bar = tqdm_terminal(total=total, desc=description, unit="steps", force=True, 
+            self.progress_bar = tqdm_terminal(total=total, desc=description, unit="steps", 
                                              mininterval=0.1, maxinterval=1.0, miniters=1, 
                                              dynamic_ncols=True, position=0, leave=True, 
                                              file=sys.stdout)
         except Exception as e:
             # Fall back to auto tqdm if terminal-specific tqdm fails
             logger.warning(f"Failed to initialize terminal-specific tqdm: {str(e)}. Falling back to auto tqdm.")
-            self.progress_bar = tqdm(total=total, desc=description, unit="steps", force=True, 
+            self.progress_bar = tqdm(total=total, desc=description, unit="steps", 
                                     mininterval=0.1, maxinterval=1.0, miniters=1, 
                                     dynamic_ncols=True, position=0, leave=True)
 
@@ -419,7 +419,6 @@ def track_progress(iterable, description: str = "Progress", logger: Optional[log
             total=total, 
             desc=description, 
             unit="steps", 
-            force=True,
             mininterval=0.1, 
             maxinterval=1.0, 
             miniters=1,
