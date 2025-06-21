@@ -50,18 +50,22 @@ def analyze_position(fen, engine_path, depth=20, time_limit=1.0):
     dict
         Dictionary containing analysis results
     """
+    engine = None
     try:
-        # Initialize the engine
-        engine = chess.engine.SimpleEngine.popen_uci(engine_path)
+        # Initialize the engine with a timeout
+        engine = chess.engine.SimpleEngine.popen_uci(engine_path, timeout=10.0)
+
+        # Set a timeout for the engine operations
+        engine.configure({"Threads": 1})  # Limit threads to avoid resource issues
 
         # Set up the board
         board = chess.Board(fen)
 
-        # Set up analysis options
+        # Set up analysis options with a strict time limit
         limit = chess.engine.Limit(depth=depth, time=time_limit)
 
-        # Analyze the position
-        info = engine.analyse(board, limit)
+        # Analyze the position with a timeout
+        info = engine.analyse(board, limit, timeout=max(time_limit * 2, 5.0))
 
         # Extract features
         result = {
@@ -115,11 +119,38 @@ def analyze_position(fen, engine_path, depth=20, time_limit=1.0):
                         result[f'engine_top_move_piece_{piece.piece_type}'] = 1
                         result['engine_top_move_piece_color'] = int(piece.color)
 
-        # Close the engine
-        engine.quit()
-
         return result
 
+    except chess.engine.EngineTerminatedError as e:
+        logging.error(f"Engine terminated unexpectedly while analyzing position {fen}: {str(e)}")
+        return {
+            'engine_cp_score': None,
+            'engine_mate_score': None,
+            'engine_top_move_uci': None,
+            'engine_pv_length': 0,
+            'engine_analysis_depth': 0,
+            'error': f"Engine terminated: {str(e)}"
+        }
+    except chess.engine.EngineError as e:
+        logging.error(f"Engine error while analyzing position {fen}: {str(e)}")
+        return {
+            'engine_cp_score': None,
+            'engine_mate_score': None,
+            'engine_top_move_uci': None,
+            'engine_pv_length': 0,
+            'engine_analysis_depth': 0,
+            'error': f"Engine error: {str(e)}"
+        }
+    except TimeoutError as e:
+        logging.error(f"Timeout while analyzing position {fen}: {str(e)}")
+        return {
+            'engine_cp_score': None,
+            'engine_mate_score': None,
+            'engine_top_move_uci': None,
+            'engine_pv_length': 0,
+            'engine_analysis_depth': 0,
+            'error': f"Timeout: {str(e)}"
+        }
     except Exception as e:
         logging.error(f"Error analyzing position {fen}: {str(e)}")
         return {
@@ -130,6 +161,18 @@ def analyze_position(fen, engine_path, depth=20, time_limit=1.0):
             'engine_analysis_depth': 0,
             'error': str(e)
         }
+    finally:
+        # Always ensure the engine is properly closed
+        if engine is not None:
+            try:
+                engine.quit()
+            except Exception as e:
+                logging.error(f"Error closing engine: {str(e)}")
+                # If normal quit fails, try to terminate the process
+                try:
+                    engine.close()
+                except:
+                    pass
 
 def process_position(args):
     """
@@ -150,7 +193,7 @@ def process_position(args):
     return idx, features
 
 @log_time(name="extract_stockfish_features")
-def extract_stockfish_features(df, engine_path, depth=20, time_limit=1.0, n_jobs=1):
+def extract_stockfish_features(df, engine_path, depth=20, time_limit=1.0, n_jobs=1, batch_size=1000, save_intermediate=True):
     """
     Extract Stockfish features for all positions in the DataFrame.
 
@@ -166,6 +209,10 @@ def extract_stockfish_features(df, engine_path, depth=20, time_limit=1.0, n_jobs
         Time limit for analysis in seconds, by default 1.0
     n_jobs : int, optional
         Number of parallel jobs, by default 1
+    batch_size : int, optional
+        Number of positions to process in each batch, by default 1000
+    save_intermediate : bool, optional
+        Whether to save intermediate results after each batch, by default True
 
     Returns
     -------
@@ -175,41 +222,67 @@ def extract_stockfish_features(df, engine_path, depth=20, time_limit=1.0, n_jobs
     logger = logging.getLogger()
     logger.info(f"Extracting Stockfish features for {len(df)} positions")
     logger.info(f"Using Stockfish engine at {engine_path}")
-    logger.info(f"Analysis parameters: depth={depth}, time_limit={time_limit}s, n_jobs={n_jobs}")
+    logger.info(f"Analysis parameters: depth={depth}, time_limit={time_limit}s, n_jobs={n_jobs}, batch_size={batch_size}")
 
     # Prepare arguments for parallel processing
     args_list = [(idx, row['FEN'], engine_path, depth, time_limit) for idx, row in df.iterrows()]
 
-    # Process positions
-    features_dict = {}
+    # Calculate number of batches
+    num_batches = (len(args_list) + batch_size - 1) // batch_size
+    logger.info(f"Processing data in {num_batches} batches of up to {batch_size} positions each")
 
-    if n_jobs > 1:
-        logger.info(f"Using parallel processing with {n_jobs} workers")
-        with ProcessPoolExecutor(max_workers=n_jobs) as executor:
-            for idx, features in track_progress(
-                executor.map(process_position, args_list), 
-                total=len(args_list), 
-                description="Analyzing positions (parallel)",
+    # Process positions in batches
+    all_features_dict = {}
+
+    for batch_idx in range(num_batches):
+        batch_start = batch_idx * batch_size
+        batch_end = min((batch_idx + 1) * batch_size, len(args_list))
+        batch_args = args_list[batch_start:batch_end]
+
+        logger.info(f"Processing batch {batch_idx + 1}/{num_batches} with {len(batch_args)} positions")
+
+        # Process batch
+        batch_features_dict = {}
+
+        if n_jobs > 1:
+            logger.info(f"Using parallel processing with {n_jobs} workers")
+            with ProcessPoolExecutor(max_workers=n_jobs) as executor:
+                for idx, features in track_progress(
+                    executor.map(process_position, batch_args), 
+                    total=len(batch_args), 
+                    description=f"Analyzing batch {batch_idx + 1}/{num_batches} (parallel)",
+                    logger=logger
+                ):
+                    batch_features_dict[idx] = features
+        else:
+            logger.info("Using sequential processing")
+            for args in track_progress(
+                batch_args, 
+                description=f"Analyzing batch {batch_idx + 1}/{num_batches}",
                 logger=logger
             ):
-                features_dict[idx] = features
-    else:
-        logger.info("Using sequential processing")
-        for args in track_progress(
-            args_list, 
-            description="Analyzing positions",
-            logger=logger
-        ):
-            idx, features = process_position(args)
-            features_dict[idx] = features
+                idx, features = process_position(args)
+                batch_features_dict[idx] = features
 
-    # Convert to DataFrame
-    features_df = pd.DataFrame.from_dict(features_dict, orient='index')
+        # Add batch results to all results
+        all_features_dict.update(batch_features_dict)
+
+        # Save intermediate results if requested
+        if save_intermediate and batch_idx < num_batches - 1:
+            intermediate_df = pd.DataFrame.from_dict(all_features_dict, orient='index')
+            intermediate_df = intermediate_df.fillna(0)
+            intermediate_file = f"stockfish_features_intermediate_batch_{batch_idx + 1}.csv"
+            logger.info(f"Saving intermediate results to {intermediate_file}")
+            intermediate_df.to_csv(intermediate_file)
+            logger.info(f"Saved intermediate results with {intermediate_df.shape[1]} features for {len(intermediate_df)} positions")
+
+    # Convert all results to DataFrame
+    features_df = pd.DataFrame.from_dict(all_features_dict, orient='index')
 
     # Fill missing values
     features_df = features_df.fillna(0)
 
-    logger.info(f"Extracted {features_df.shape[1]} Stockfish features")
+    logger.info(f"Extracted {features_df.shape[1]} Stockfish features for {len(features_df)} positions")
 
     return features_df
 
@@ -226,9 +299,23 @@ def main():
     parser.add_argument("--output_test", type=str, default="stockfish_features_test.csv", help="Output file for test features")
     parser.add_argument("--depth", type=int, default=20, help="Maximum depth for analysis")
     parser.add_argument("--time_limit", type=float, default=1.0, help="Time limit for analysis in seconds")
-    parser.add_argument("--n_jobs", type=int, default=1, help="Number of parallel jobs")
+    parser.add_argument("--n_jobs", type=int, default=1, help="Number of parallel jobs (default: 1, recommended max: CPU count)")
+    parser.add_argument("--batch_size", type=int, default=1000, help="Number of positions to process in each batch")
+    parser.add_argument("--no_save_intermediate", action="store_true", help="Don't save intermediate results after each batch")
 
     args = parser.parse_args()
+
+    # Limit the number of parallel jobs to avoid overwhelming the system
+    import multiprocessing
+    cpu_count = multiprocessing.cpu_count()
+    if args.n_jobs > cpu_count:
+        print(f"Warning: Requested {args.n_jobs} parallel jobs, but only {cpu_count} CPUs available.")
+        print(f"Consider reducing n_jobs to {cpu_count} or less to avoid performance issues.")
+
+    # Ensure n_jobs is at least 1
+    if args.n_jobs < 1:
+        args.n_jobs = 1
+        print("Warning: n_jobs must be at least 1. Setting n_jobs=1.")
 
     # Set up logging
     logger = get_custom_logger()
@@ -257,7 +344,9 @@ def main():
             args.engine_path, 
             depth=args.depth, 
             time_limit=args.time_limit, 
-            n_jobs=args.n_jobs
+            n_jobs=args.n_jobs,
+            batch_size=args.batch_size,
+            save_intermediate=not args.no_save_intermediate
         )
 
         # Save training features
@@ -274,7 +363,9 @@ def main():
             args.engine_path, 
             depth=args.depth, 
             time_limit=args.time_limit, 
-            n_jobs=args.n_jobs
+            n_jobs=args.n_jobs,
+            batch_size=args.batch_size,
+            save_intermediate=not args.no_save_intermediate
         )
 
         # Save test features
