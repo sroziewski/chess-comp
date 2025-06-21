@@ -2160,23 +2160,49 @@ def predict_missing_opening_tags(df, tag_column='OpeningTags', fen_features=None
     has_tags = ~df[tag_column].isna() & (df[tag_column] != '')
     df_without_tags = df[~has_tags].copy()
 
-    # Create a simplified results DataFrame for backward compatibility
+    # Create a results DataFrame that includes all rows from the original dataframe
+    # Initialize with default values for all rows
     results = pd.DataFrame({
-        'predicted_family': hierarchical_results['predicted_tag'],  # Use full tag (family_variation)
-        'prediction_confidence': hierarchical_results['prediction_confidence']
-    }, index=hierarchical_results.index)
+        'predicted_family': '',
+        'prediction_confidence': 0.0,
+        'family_only': '',
+        'variation_only': '',
+        'family_confidence': 0.0,
+        'variation_confidence': 0.0
+    }, index=df.index)
 
-    # Only keep high-confidence predictions
+    # Update with predictions for rows that have predictions
+    if not hierarchical_results.empty:
+        results.loc[hierarchical_results.index, 'predicted_family'] = hierarchical_results['predicted_tag']
+        results.loc[hierarchical_results.index, 'prediction_confidence'] = hierarchical_results['prediction_confidence']
+        results.loc[hierarchical_results.index, 'family_only'] = hierarchical_results['predicted_family']
+        results.loc[hierarchical_results.index, 'variation_only'] = hierarchical_results['predicted_variation']
+        results.loc[hierarchical_results.index, 'family_confidence'] = hierarchical_results['family_confidence']
+        results.loc[hierarchical_results.index, 'variation_confidence'] = hierarchical_results['variation_confidence']
+
+    # For rows with original tags, set confidence to 1.0 and use the original tag as the prediction
+    for idx in df[has_tags].index:
+        original_tag = df.loc[idx, tag_column]
+        # Extract family and variation from the original tag if possible
+        family = original_tag.split(':')[0].strip() if ':' in original_tag else original_tag
+        variation = original_tag.split(':', 1)[1].strip() if ':' in original_tag else ''
+
+        results.loc[idx, 'predicted_family'] = original_tag
+        results.loc[idx, 'prediction_confidence'] = 1.0
+        results.loc[idx, 'family_only'] = family
+        results.loc[idx, 'variation_only'] = variation
+        results.loc[idx, 'family_confidence'] = 1.0
+        results.loc[idx, 'variation_confidence'] = 1.0 if variation else 0.0
+
+    # Only count high-confidence predictions for logging
     high_conf_threshold = 0.7
-    high_conf_predictions = results[results['prediction_confidence'] >= high_conf_threshold]
+    high_conf_predictions = results[
+        (results['prediction_confidence'] >= high_conf_threshold) & 
+        (~has_tags)  # Only count predictions for rows without original tags
+    ]
 
     logger.info(
         f"Made {len(high_conf_predictions)} high-confidence predictions out of {len(df_without_tags)} puzzles without tags")
-
-    # For detailed analysis, add the hierarchical results
-    results['family_only'] = hierarchical_results['predicted_family']
-    results['variation_only'] = hierarchical_results['predicted_variation']
-    results['family_confidence'] = hierarchical_results['family_confidence']
-    results['variation_confidence'] = hierarchical_results['variation_confidence']
+    logger.info(f"Total rows in results: {len(results)} (should match total dataset size: {len(df)})")
 
     return results, models_dict, combined_features
