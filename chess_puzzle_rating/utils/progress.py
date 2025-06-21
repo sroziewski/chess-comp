@@ -270,7 +270,7 @@ class ProgressTracker:
         self.current = 0
 
         # Initialize tqdm progress bar
-        self.progress_bar = tqdm(total=total, desc=description, unit="steps", force=True)
+        self.progress_bar = tqdm(total=total, desc=description, unit="steps", force=True, mininterval=0.1, maxinterval=1.0, miniters=1, dynamic_ncols=True, position=0, leave=True)
 
         # Log the start
         self.logger.info(f"Started {description} with {total} steps")
