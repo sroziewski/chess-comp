@@ -64,8 +64,8 @@ def analyze_position(fen, engine_path, depth=20, time_limit=1.0):
         # Set up analysis options with a strict time limit
         limit = chess.engine.Limit(depth=depth, time=time_limit)
 
-        # Analyze the position with a timeout
-        info = engine.analyse(board, limit, timeout=max(time_limit * 2, 5.0))
+        # Analyze the position
+        info = engine.analyse(board, limit)
 
         # Extract features
         result = {
