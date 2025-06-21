@@ -890,7 +890,7 @@ def train_theme_models(X, y_binary, theme_names, n_jobs=-1, min_auc=0.7, use_gpu
                 'device': 'gpu',
                 'gpu_platform_id': 0,
                 'gpu_device_id': 0,
-                'tree_learner': 'gpu_hist',
+                'boosting_type': 'gbdt',
                 'force_col_wise': True,
                 'verbosity': -1
             })
