@@ -15,7 +15,16 @@ import threading
 from functools import wraps
 import json
 import numpy as np
+import sys
+import os
 from tqdm.auto import tqdm
+from tqdm import tqdm as tqdm_terminal
+
+# Ensure tqdm works in all environments by forcing it to use terminal mode
+os.environ['TQDM_DISABLE'] = '0'  # Ensure tqdm is not disabled
+os.environ['TQDM_MININTERVAL'] = '0.1'  # Update at least every 0.1 seconds
+os.environ['TQDM_MAXINTERVAL'] = '1.0'  # Update at most every 1.0 second
+os.environ['TQDM_MINITERS'] = '1'  # Update after at least 1 iteration
 
 # Try to import optional visualization dependencies
 try:
@@ -270,7 +279,18 @@ class ProgressTracker:
         self.current = 0
 
         # Initialize tqdm progress bar
-        self.progress_bar = tqdm(total=total, desc=description, unit="steps", force=True, mininterval=0.1, maxinterval=1.0, miniters=1, dynamic_ncols=True, position=0, leave=True)
+        # Try to use terminal-specific tqdm first, which is more reliable in terminal environments
+        try:
+            self.progress_bar = tqdm_terminal(total=total, desc=description, unit="steps", force=True, 
+                                             mininterval=0.1, maxinterval=1.0, miniters=1, 
+                                             dynamic_ncols=True, position=0, leave=True, 
+                                             file=sys.stdout)
+        except Exception as e:
+            # Fall back to auto tqdm if terminal-specific tqdm fails
+            logger.warning(f"Failed to initialize terminal-specific tqdm: {str(e)}. Falling back to auto tqdm.")
+            self.progress_bar = tqdm(total=total, desc=description, unit="steps", force=True, 
+                                    mininterval=0.1, maxinterval=1.0, miniters=1, 
+                                    dynamic_ncols=True, position=0, leave=True)
 
         # Log the start
         self.logger.info(f"Started {description} with {total} steps")
@@ -376,6 +396,10 @@ def track_progress(iterable, description: str = "Progress", logger: Optional[log
     Any
         Items from the iterable
     """
+    # Get logger
+    if logger is None:
+        logger = get_logger()
+
     # Use provided total or get the length of the iterable if possible
     if total is None:
         try:
@@ -385,19 +409,85 @@ def track_progress(iterable, description: str = "Progress", logger: Optional[log
             iterable = list(iterable)
             total = len(iterable)
 
-    tracker = ProgressTracker(
-        total=total,
-        description=description,
-        logger=logger,
-        log_interval=log_interval,
-        store_metrics=store_metrics
-    )
+    # Log the start
+    logger.info(f"Started {description} with {total} steps")
 
-    for item in iterable:
-        yield item
-        tracker.update()
+    # Try to use terminal-specific tqdm first for direct progress bar
+    try:
+        # Create a terminal-specific tqdm progress bar
+        with tqdm_terminal(
+            total=total, 
+            desc=description, 
+            unit="steps", 
+            force=True,
+            mininterval=0.1, 
+            maxinterval=1.0, 
+            miniters=1,
+            dynamic_ncols=True, 
+            position=0, 
+            leave=True,
+            file=sys.stdout
+        ) as pbar:
+            # Initialize metrics
+            start_time = time.time()
+            last_log_percent = -1
+            current = 0
 
-    tracker.finish()
+            # Process each item
+            for item in iterable:
+                yield item
+                current += 1
+                pbar.update(1)
+
+                # Calculate progress percentage
+                percent_complete = int((current / total) * 100)
+
+                # Log at specified intervals
+                if percent_complete >= last_log_percent + log_interval or current >= total:
+                    elapsed_time = time.time() - start_time
+                    _, remaining_time_str = estimate_remaining_time(current, total, elapsed_time)
+
+                    logger.info(
+                        f"{description}: {percent_complete}% complete ({current}/{total}), "
+                        f"elapsed: {elapsed_time:.1f}s, estimated remaining: {remaining_time_str}"
+                    )
+
+                    last_log_percent = percent_complete
+
+                    # Store metrics
+                    if store_metrics:
+                        record_metric(
+                            name=f"progress_{description.replace(' ', '_')}",
+                            value={
+                                'current': current,
+                                'total': total,
+                                'percent_complete': percent_complete,
+                                'elapsed_time': elapsed_time
+                            },
+                            category="progress_tracking"
+                        )
+
+            # Log completion
+            total_time = time.time() - start_time
+            logger.info(f"Completed {description} in {total_time:.2f} seconds")
+
+    except Exception as e:
+        # Fall back to ProgressTracker if direct tqdm fails
+        logger.warning(f"Failed to use direct tqdm progress bar: {str(e)}. Falling back to ProgressTracker.")
+
+        tracker = ProgressTracker(
+            total=total,
+            description=description,
+            logger=logger,
+            log_interval=log_interval,
+            store_metrics=store_metrics
+        )
+
+        for item in iterable:
+            yield item
+            tracker.update()
+
+        tracker.finish()
 
 
 def record_metric(name: str, value: Any, category: str = "custom") -> None:
