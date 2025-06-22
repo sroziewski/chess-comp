@@ -23,6 +23,7 @@ ANALYSIS_TIME_LIMIT_SECONDS = 0.1  # Time per FEN analysis (adjust as needed)
 # ANALYSIS_DEPTH = 10 # Depth per FEN analysis
 
 OUTPUT_CSV_FILE = "/raid/sroziewski/chess/engine_features.csv"
+OUTPUT_TEST_CSV_FILE = "/raid/sroziewski/chess/engine_features_test.csv"  # Separate file for test features
 TRAIN_FILE_INPUT = '/raid/sroziewski/chess/training_data_02_01.csv' # To get FENs from train
 TEST_FILE_INPUT = '/raid/sroziewski/chess/testing_data_cropped.csv'   # To get FENs from test
 
@@ -208,8 +209,62 @@ def main_parallel_v2():
     if 'FEN' not in engine_features_df.columns and total_tasks > 0:
         engine_features_df['FEN'] = [task[1] for task in tasks_to_process[:len(engine_features_df)]]
 
+    # Save all features (combined train and test)
     engine_features_df.to_csv(OUTPUT_CSV_FILE, index=False)
-    logger.info(f"Engine features saved to {OUTPUT_CSV_FILE}")
+    logger.info(f"All engine features saved to {OUTPUT_CSV_FILE}")
+
+    # Save test set features separately
+    test_fens = set()  # Initialize outside try block to ensure it's defined
+    try:
+        logger.info("Extracting and saving test set features...")
+        # Create a mapping from FEN to features
+        fen_to_features = {row['FEN']: row for _, row in engine_features_df.iterrows()}
+
+        # Get test set FENs
+        test_fens = set(test_df['FEN'].unique())
+        logger.info(f"Found {len(test_fens)} unique FENs in test set")
+
+        # Extract features for test set FENs
+        test_features = []
+        missing_fens = 0
+        for fen in test_fens:
+            if fen in fen_to_features:
+                test_features.append(fen_to_features[fen])
+            else:
+                missing_fens += 1
+
+        if missing_fens > 0:
+            logger.warning(f"Could not find features for {missing_fens} test set FENs")
+
+        # Create DataFrame and save
+        test_features_df = pd.DataFrame(test_features)
+        test_features_df.to_csv(OUTPUT_TEST_CSV_FILE, index=False)
+        logger.info(f"Test set engine features saved to {OUTPUT_TEST_CSV_FILE} ({len(test_features_df)} rows)")
+    except Exception as e:
+        logger.error(f"Error while saving test set features: {e}", exc_info=True)
+        # Continue with the rest of the script even if test set extraction fails
+        test_features_df = pd.DataFrame()
+
+    # Print test set stats
+    if not test_features_df.empty:
+        logger.info("\n--- Test Set Feature Summary ---")
+        logger.info(f"Total test set FENs: {len(test_fens)}")
+        logger.info(f"Test set features extracted: {len(test_features_df)}")
+
+        # Basic score stats for test set
+        logger.info(f"Test CP Score non-null: {test_features_df['engine_cp_score'].notna().sum()}")
+        logger.info(f"Test Mate Score non-null: {test_features_df['engine_mate_score'].notna().sum()}")
+        logger.info(f"Test Median CP Score: {test_features_df['engine_cp_score'].median()}")
+
+        # PV stats for test set
+        logger.info(f"Test Average PV Length: {test_features_df['engine_pv_length'].mean():.2f}")
+        logger.info(f"Test Top Moves Available: {test_features_df['engine_top_move_uci'].notna().sum()}")
+
+        # Error stats for test set
+        if 'error' in test_features_df.columns:
+            error_count = test_features_df['error'].notna().sum()
+            if error_count > 0:
+                logger.warning(f"Test set errors encountered: {error_count} ({error_count/len(test_features_df)*100:.1f}%)")
 
     # Print some stats
     logger.info("\n--- Feature Summary ---")
