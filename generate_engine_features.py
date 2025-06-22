@@ -18,7 +18,7 @@ ENGINE_PATH = "/usr/games/stockfish" # Example for Linux/macOS
 # UCI_OPTIONS = {"EvalFile": "/path/to/your.nnue"} # Example
 
 # Analysis settings
-ANALYSIS_TIME_LIMIT_SECONDS = 0.1  # Time per FEN analysis (adjust as needed)
+ANALYSIS_TIME_LIMIT_SECONDS = 10  # Time per FEN analysis (adjust as needed)
 # OR
 # ANALYSIS_DEPTH = 10 # Depth per FEN analysis
 
