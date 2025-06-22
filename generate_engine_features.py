@@ -172,7 +172,7 @@ def main_parallel_v2():
                                      engine_exe_path=ENGINE_PATH,
                                      time_limit_sec=ANALYSIS_TIME_LIMIT_SECONDS)
 
-    chunksize = max(1, min(1024, (total_tasks // actual_num_processes // 4) + 1))
+    chunksize = max(1, min(256, (total_tasks // actual_num_processes // 4) + 1))
     logger.info(f"Using chunksize: {chunksize} for Pool.imap_unordered")
 
     try:
