@@ -80,6 +80,7 @@ def analyze_fen_task_v2(fen_data_tuple, engine_exe_path, time_limit_sec):
         pv = info.get("pv")
         if pv and len(pv) > 0:
             features['engine_top_move_uci'] = pv[0].uci()
+            features['engine_top_move_pgn'] = pv[0].pgn()
             features['engine_pv_length'] = len(pv)
 
         features['engine_analysis_depth'] = info.get("depth", 0)
