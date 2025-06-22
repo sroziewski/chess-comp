@@ -50,7 +50,12 @@ def analyze_fen_task_v2(fen_data_tuple, engine_exe_path, time_limit_sec):
     # Default features in case of any error
     features = {
         'FEN': fen, 'engine_cp_score': None, 'engine_mate_score': None,
-        'engine_top_move_uci': None, 'engine_pv_length': 0, 'engine_analysis_depth': 0
+        'engine_top_move_uci': None, 'engine_pv_length': 0, 'engine_analysis_depth': 0,
+        'engine_multipv_count': 1, 'engine_nodes': 0, 'engine_nps': 0,
+        'engine_time': 0, 'engine_tbhits': 0, 'engine_hashfull': 0,
+        'engine_selective_depth': 0, 'engine_second_move_uci': None, 'engine_third_move_uci': None,
+        'engine_top_move_is_capture': 0, 'engine_top_move_is_check': 0, 'engine_top_move_is_promotion': 0,
+        'engine_top_move_piece_color': None
     }
 
     try:
@@ -64,6 +69,16 @@ def analyze_fen_task_v2(fen_data_tuple, engine_exe_path, time_limit_sec):
         limit = chess.engine.Limit(time=time_limit_sec)
         info = engine.analyse(board, limit)
 
+        # Extract basic engine info
+        features['engine_analysis_depth'] = info.get('depth', 0)
+        features['engine_multipv_count'] = len(info.get('multipv', [])) if 'multipv' in info and isinstance(info.get('multipv'), (list, tuple)) else 1
+        features['engine_nodes'] = info.get('nodes', 0)
+        features['engine_nps'] = info.get('nps', 0)
+        features['engine_time'] = info.get('time', 0)
+        features['engine_tbhits'] = info.get('tbhits', 0)
+        features['engine_hashfull'] = info.get('hashfull', 0)
+        features['engine_selective_depth'] = info.get('seldepth', 0)
+
         # Extract score
         score_obj = info.get("score")
         if score_obj is not None:
@@ -74,21 +89,43 @@ def analyze_fen_task_v2(fen_data_tuple, engine_exe_path, time_limit_sec):
                 features['engine_cp_score'] = 32000 * np.sign(pov_score.mate()) if pov_score.mate() != 0 else 0
             else:
                 features['engine_cp_score'] = pov_score.score()
-            # Extract principal variation (PV)
-        pv = info.get("pv")
-        if pv and len(pv) > 0:
-            features['engine_top_move_uci'] = pv[0].uci()
-            features['engine_pv_length'] = len(pv)
 
-        features['engine_analysis_depth'] = info.get("depth", 0)
+        # Extract principal variation (PV)
+        pv = info.get("pv")
+        if pv and isinstance(pv, (list, tuple)):
+            features['engine_pv_length'] = len(pv)
+            if pv:
+                features['engine_top_move_uci'] = pv[0].uci()
+
+                # Additional PV-based features
+                if len(pv) > 1:
+                    features['engine_second_move_uci'] = pv[1].uci()
+                if len(pv) > 2:
+                    features['engine_third_move_uci'] = pv[2].uci()
+
+                # Calculate move characteristics for top move
+                top_move = pv[0]
+                features['engine_top_move_is_capture'] = int(board.is_capture(top_move))
+                features['engine_top_move_is_check'] = int(board.gives_check(top_move))
+                features['engine_top_move_is_promotion'] = int(top_move.promotion is not None)
+
+                # Piece type of the moving piece
+                from_square = top_move.from_square
+                piece = board.piece_at(from_square)
+                if piece:
+                    features[f'engine_top_move_piece_{piece.piece_type}'] = 1
+                    features['engine_top_move_piece_color'] = int(piece.color)
 
     except ValueError:  # Invalid FEN
         logger.warning(f"Invalid FEN encountered and skipped: {fen}")
+        features['error'] = "Invalid FEN"
     except chess.engine.EngineError as e:  # More specific engine errors
         logger.error(
             f"EngineError during analysis for FEN {fen} (ID: {unique_id}): {e}. Engine path: {engine_exe_path}")
+        features['error'] = f"Engine error: {str(e)}"
     except Exception as e:
         logger.error(f"Unexpected error during analysis for FEN {fen} (ID: {unique_id}): {e}", exc_info=True)
+        features['error'] = str(e)
     finally:
         if engine:
             try:
@@ -179,14 +216,40 @@ def main_parallel_v2():
     logger.info(f"Total FENs submitted for processing: {total_tasks}")
     logger.info(f"Total results received: {len(engine_features_df)}")
     if not engine_features_df.empty:
+        # Basic score stats
         logger.info(f"CP Score non-null: {engine_features_df['engine_cp_score'].notna().sum()}")
         logger.info(f"Mate Score non-null: {engine_features_df['engine_mate_score'].notna().sum()}")
         logger.info(f"Median CP Score: {engine_features_df['engine_cp_score'].median()}")
+
+        # Engine analysis stats
         mean_depth_val = engine_features_df[
             'engine_analysis_depth'].mean() if 'engine_analysis_depth' in engine_features_df and engine_features_df[
             'engine_analysis_depth'].notna().any() else 'N/A'
         logger.info(
             f"Mean Analysis Depth: {mean_depth_val if isinstance(mean_depth_val, str) else f'{mean_depth_val:.2f}'}")
+
+        # PV stats
+        logger.info(f"Average PV Length: {engine_features_df['engine_pv_length'].mean():.2f}")
+        logger.info(f"Top Moves Available: {engine_features_df['engine_top_move_uci'].notna().sum()}")
+
+        # Move characteristic stats
+        if 'engine_top_move_is_capture' in engine_features_df:
+            capture_pct = engine_features_df['engine_top_move_is_capture'].mean() * 100
+            check_pct = engine_features_df['engine_top_move_is_check'].mean() * 100
+            promotion_pct = engine_features_df['engine_top_move_is_promotion'].mean() * 100
+            logger.info(f"Top Move Characteristics: Captures {capture_pct:.1f}%, Checks {check_pct:.1f}%, Promotions {promotion_pct:.1f}%")
+
+        # Engine performance stats
+        if 'engine_nodes' in engine_features_df and engine_features_df['engine_nodes'].notna().any():
+            avg_nodes = engine_features_df['engine_nodes'].mean()
+            avg_nps = engine_features_df['engine_nps'].mean()
+            logger.info(f"Average Nodes: {avg_nodes:.0f}, Average NPS: {avg_nps:.0f}")
+
+        # Error stats
+        if 'error' in engine_features_df.columns:
+            error_count = engine_features_df['error'].notna().sum()
+            if error_count > 0:
+                logger.warning(f"Errors encountered: {error_count} ({error_count/len(engine_features_df)*100:.1f}%)")
     else:
         logger.warning("engine_features_df is empty, no stats to display.")
 
