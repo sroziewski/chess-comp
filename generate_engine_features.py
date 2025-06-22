@@ -34,6 +34,8 @@ NUM_PROCESSES = cpu_count()
 
 # Configure basic logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(processName)s - %(message)s')
+# Create logger instance
+logger = logging.getLogger()
 
 # --- Engine Analysis Function (Worker Task) ---
 def analyze_fen_task_v2(fen_data_tuple, engine_exe_path, time_limit_sec):
