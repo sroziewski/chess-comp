@@ -23,6 +23,7 @@ ANALYSIS_TIME_LIMIT_SECONDS = 0.1  # Time per FEN analysis (adjust as needed)
 # ANALYSIS_DEPTH = 10 # Depth per FEN analysis
 
 OUTPUT_CSV_FILE = "/raid/sroziewski/chess/engine_features.csv"
+OUTPUT_TEST_CSV_FILE = "/raid/sroziewski/chess/engine_features_test.csv"
 TRAIN_FILE_INPUT = '/raid/sroziewski/chess/training_data_02_01.csv' # To get FENs from train
 TEST_FILE_INPUT = '/raid/sroziewski/chess/testing_data_cropped.csv'   # To get FENs from test
 
@@ -52,7 +53,13 @@ def analyze_fen_task_v2(fen_data_tuple, engine_exe_path, time_limit_sec):
     # Default features in case of any error
     features = {
         'FEN': fen, 'engine_cp_score': None, 'engine_mate_score': None,
-        'engine_top_move_uci': None, 'engine_pv_length': 0, 'engine_analysis_depth': 0
+        'engine_top_move_uci': None,
+        'engine_pv_length': 0, 'engine_analysis_depth': 0,
+        'engine_multipv_count': 1, 'engine_nodes': 0, 'engine_nps': 0,
+        'engine_time': 0, 'engine_tbhits': 0, 'engine_hashfull': 0,
+        'engine_selective_depth': 0, 'engine_second_move_uci': None, 'engine_third_move_uci': None,
+        'engine_top_move_is_capture': 0, 'engine_top_move_is_check': 0, 'engine_top_move_is_promotion': 0,
+        'engine_top_move_piece_color': None
     }
 
     try:
@@ -65,6 +72,17 @@ def analyze_fen_task_v2(fen_data_tuple, engine_exe_path, time_limit_sec):
         # If using depth: limit = chess.engine.Limit(depth=analysis_depth_limit)
         limit = chess.engine.Limit(time=time_limit_sec)
         info = engine.analyse(board, limit)
+
+        # Extract basic engine info
+        features['engine_analysis_depth'] = info.get('depth', 0)
+        features['engine_multipv_count'] = len(info.get('multipv', [])) if 'multipv' in info and isinstance(
+            info.get('multipv'), (list, tuple)) else 1
+        features['engine_nodes'] = info.get('nodes', 0)
+        features['engine_nps'] = info.get('nps', 0)
+        features['engine_time'] = info.get('time', 0)
+        features['engine_tbhits'] = info.get('tbhits', 0)
+        features['engine_hashfull'] = info.get('hashfull', 0)
+        features['engine_selective_depth'] = info.get('seldepth', 0)
 
         # Extract score
         score_obj = info.get("score")
@@ -80,8 +98,24 @@ def analyze_fen_task_v2(fen_data_tuple, engine_exe_path, time_limit_sec):
         pv = info.get("pv")
         if pv and len(pv) > 0:
             features['engine_top_move_uci'] = pv[0].uci()
-            features['engine_top_move_pgn'] = pv[0].pgn()
+            # Additional PV-based features
+            if len(pv) > 1:
+                features['engine_second_move_uci'] = pv[1].uci()
+            if len(pv) > 2:
+                features['engine_third_move_uci'] = pv[2].uci()
             features['engine_pv_length'] = len(pv)
+            # Calculate move characteristics for top move
+            top_move = pv[0]
+            features['engine_top_move_is_capture'] = int(board.is_capture(top_move))
+            features['engine_top_move_is_check'] = int(board.gives_check(top_move))
+            features['engine_top_move_is_promotion'] = int(top_move.promotion is not None)
+
+            # Piece type of the moving piece
+            from_square = top_move.from_square
+            piece = board.piece_at(from_square)
+            if piece:
+                features[f'engine_top_move_piece_{piece.piece_type}'] = 1
+                features['engine_top_move_piece_color'] = int(piece.color)
 
         features['engine_analysis_depth'] = info.get("depth", 0)
 
@@ -138,7 +172,7 @@ def main_parallel_v2():
                                      engine_exe_path=ENGINE_PATH,
                                      time_limit_sec=ANALYSIS_TIME_LIMIT_SECONDS)
 
-    chunksize = max(1, min(256, (total_tasks // actual_num_processes // 4) + 1))
+    chunksize = max(1, min(1024, (total_tasks // actual_num_processes // 4) + 1))
     logger.info(f"Using chunksize: {chunksize} for Pool.imap_unordered")
 
     try:
