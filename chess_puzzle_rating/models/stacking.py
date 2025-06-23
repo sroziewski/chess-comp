@@ -207,6 +207,7 @@ class XGBoostModel(BaseModel):  # Assuming BaseModel is defined elsewhere
         self.eval_metric = self.model_params.pop('eval_metric', None)
         # Initialize XGBoost model
         self.model = xgb.XGBRegressor(**self.model_params)
+        self.best_iteration = self.model.best_iteration
 
     def fit(self, X: pd.DataFrame, y: pd.Series, eval_set: List[Tuple[pd.DataFrame, pd.Series]] = None) -> 'XGBoostModel':
         """
@@ -259,7 +260,12 @@ class XGBoostModel(BaseModel):  # Assuming BaseModel is defined elsewhere
         Returns:
             Predictions
         """
-        return self.model.predict(X, ntree_limit=self.model.best_ntree_limit)
+        # In newer versions of XGBoost, best_ntree_limit is deprecated
+        # Use iteration_range instead if best_iteration is available
+        if hasattr(self.model, 'best_iteration') and self.model.best_iteration is not None:
+            return self.model.predict(X, iteration_range=(0, self.model.best_iteration))
+        else:
+            return self.model.predict(X)
 
     def save(self, path: str) -> None:
         """

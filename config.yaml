@@ -182,6 +182,7 @@ stacking:
       learning_rate: 0.05
       max_depth: 6
       early_stopping_rounds: 50
+      best_iteration: 150
     # Neural Network base model parameters
     neural_network:
       hidden_dims: [256, 128, 64]
@@ -189,6 +190,7 @@ stacking:
       batch_size: 256
       epochs: 100
       patience: 10
+
 
 # Performance dashboards configuration
 dashboards:
