@@ -202,7 +202,7 @@ class XGBoostModel(BaseModel):  # Assuming BaseModel is defined elsewhere
         """
         super().__init__(name, model_params or {})  # Handle None for model_params
         # Store early_stopping_rounds for use in fit method
-        self.early_stopping_rounds = self.model_params.pop('early_stopping_rounds', 50)
+        # self.early_stopping_rounds = self.model_params.pop('early_stopping_rounds', 50)
         # Remove eval_metric from model_params to avoid issues
         self.eval_metric = self.model_params.pop('eval_metric', None)
         # Initialize XGBoost model
@@ -238,7 +238,6 @@ class XGBoostModel(BaseModel):  # Assuming BaseModel is defined elsewhere
                 X,
                 y,
                 eval_set=eval_set,
-                early_stopping_rounds=self.early_stopping_rounds,
                 verbose=False
             )
         else:
