@@ -140,6 +140,27 @@ class LightGBMModel(BaseModel):
         Returns:
             self: The fitted model
         """
+        # Validate inputs
+        if not isinstance(X, pd.DataFrame) or not isinstance(y, pd.Series):
+            raise ValueError("X must be a pandas DataFrame and y must be a pandas Series")
+
+        # Check that X and y have the same length
+        if len(X) != len(y):
+            raise ValueError(f"Length of X ({len(X)}) and y ({len(y)}) must be the same")
+
+        # Validate eval_set if provided
+        if eval_set is not None:
+            if not isinstance(eval_set, list) or not all(
+                isinstance(t, tuple) and len(t) == 2 and isinstance(t[0], pd.DataFrame) and isinstance(t[1], pd.Series)
+                for t in eval_set
+            ):
+                raise ValueError("eval_set must be a list of tuples [(X_valid, y_valid), ...]")
+
+            # Check that each eval set has matching X and y lengths
+            for i, (X_val, y_val) in enumerate(eval_set):
+                if len(X_val) != len(y_val):
+                    raise ValueError(f"Length of X ({len(X_val)}) and y ({len(y_val)}) in eval_set[{i}] must be the same")
+
         callbacks = [lgb.early_stopping(self.early_stopping_rounds, verbose=False)]
 
         self.model.fit(
@@ -1454,13 +1475,23 @@ def create_stacking_model(
         meta_features_val.columns = [f"{model.name}_pred" for model in base_models]
 
         if use_features_in_meta:
-            meta_features_train = pd.concat([meta_features_train, X_train.reset_index(drop=True)], axis=1)
-            meta_features_val = pd.concat([meta_features_val, X_val.reset_index(drop=True)], axis=1)
+            # Reset indices on both DataFrames to ensure proper alignment
+            meta_features_train = meta_features_train.reset_index(drop=True)
+            X_train_reset = X_train.reset_index(drop=True)
+            meta_features_train = pd.concat([meta_features_train, X_train_reset], axis=1)
+
+            meta_features_val = meta_features_val.reset_index(drop=True)
+            X_val_reset = X_val.reset_index(drop=True)
+            meta_features_val = pd.concat([meta_features_val, X_val_reset], axis=1)
 
         # Optimize meta-learner
+        # Reset y indices to match meta_features indices
+        y_train_reset = y_train.reset_index(drop=True)
+        y_val_reset = y_val.reset_index(drop=True)
+
         best_params, _ = optimize_meta_learner(
-            meta_features_train, y_train,
-            meta_features_val, y_val,
+            meta_features_train, y_train_reset,
+            meta_features_val, y_val_reset,
             meta_learner_type=meta_learner_type,
             n_trials=100,
             timeout=3600,
