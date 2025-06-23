@@ -202,6 +202,8 @@ class XGBoostModel(BaseModel):
         """
         super().__init__(name, model_params)
         self.early_stopping_rounds = self.model_params.pop('early_stopping_rounds', 50)
+        # Remove eval_metric from model_params to avoid it being passed to fit() method
+        self.eval_metric = self.model_params.pop('eval_metric', None)
         self.model = xgb.XGBRegressor(**self.model_params)
 
     def fit(self, X: pd.DataFrame, y: pd.Series, eval_set: List[Tuple[pd.DataFrame, pd.Series]] = None) -> 'XGBoostModel':
@@ -219,7 +221,6 @@ class XGBoostModel(BaseModel):
         self.model.fit(
             X, y,
             eval_set=eval_set,
-            eval_metric='rmse',
             early_stopping_rounds=self.early_stopping_rounds,
             verbose=False
         )
@@ -662,6 +663,8 @@ class StackingModel:
                 'boosting_type': 'gbdt',
                 'learning_rate': 0.05,
                 'n_estimators': 1000,
+                'min_child_samples': 10,  # Reduced from default 20
+                'min_gain_to_split': 0.0,  # Allow splits with no gain
                 'early_stopping_rounds': 50,
                 'random_state': random_state
             }
@@ -934,6 +937,7 @@ def optimize_meta_learner(
                 'num_leaves': trial.suggest_int('num_leaves', 20, 150),
                 'max_depth': trial.suggest_int('max_depth', 3, 12),
                 'min_child_samples': trial.suggest_int('min_child_samples', 5, 100),
+                'min_gain_to_split': trial.suggest_float('min_gain_to_split', 0.0, 1.0),
                 'subsample': trial.suggest_float('subsample', 0.5, 1.0),
                 'colsample_bytree': trial.suggest_float('colsample_bytree', 0.5, 1.0),
                 'reg_alpha': trial.suggest_float('reg_alpha', 1e-8, 10.0, log=True),
@@ -1156,6 +1160,8 @@ class RangeSpecificStackingModel:
                     'boosting_type': 'gbdt',
                     'learning_rate': 0.05,
                     'n_estimators': 1000,
+                    'min_child_samples': 10,  # Reduced from default 20
+                    'min_gain_to_split': 0.0,  # Allow splits with no gain
                     'early_stopping_rounds': 50,
                     'random_state': self.random_state
                 }
@@ -1381,6 +1387,8 @@ def create_stacking_model(
                 'n_estimators': 1000,
                 'num_leaves': 31,
                 'max_depth': -1,
+                'min_child_samples': 10,  # Reduced from default 20
+                'min_gain_to_split': 0.0,  # Allow splits with no gain
                 'early_stopping_rounds': 50,
                 'random_state': random_state
             }
