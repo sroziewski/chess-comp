@@ -955,7 +955,7 @@ def optimize_meta_learner(
         y_train: Training target
         X_val: Validation features
         y_val: Validation target
-        meta_learner_type: Type of meta-learner ('lightgbm', 'xgboost', or 'neural_network')
+        meta_learner_type: Type of meta-learner ('lightgbm' or 'xgboost')
         n_trials: Number of optimization trials
         timeout: Timeout in seconds
         random_state: Random state for reproducibility
@@ -1001,21 +1001,6 @@ def optimize_meta_learner(
                 'random_state': random_state
             }
             model = XGBoostModel(name="meta_learner_optuna", model_params=params)
-
-        elif meta_learner_type == 'neural_network':
-            hidden_dims = [
-                trial.suggest_int('hidden_dim_1', 64, 512),
-                trial.suggest_int('hidden_dim_2', 32, 256),
-                trial.suggest_int('hidden_dim_3', 16, 128)
-            ]
-            params = {
-                'hidden_dims': hidden_dims,
-                'learning_rate': trial.suggest_float('learning_rate', 1e-4, 1e-2, log=True),
-                'batch_size': trial.suggest_categorical('batch_size', [64, 128, 256, 512]),
-                'epochs': 100,  # Fixed for optimization
-                'patience': 10,  # Fixed for optimization
-            }
-            model = NeuralNetworkModel(name="meta_learner_optuna", model_params=params)
 
         else:
             raise ValueError(f"Unknown meta-learner type: {meta_learner_type}")
@@ -1070,7 +1055,7 @@ class RangeSpecificStackingModel:
             n_splits: Number of cross-validation splits
             random_state: Random state for reproducibility
             optimize_meta: Whether to optimize meta-learner hyperparameters
-            meta_learner_type: Type of meta-learner ('lightgbm', 'xgboost', or 'neural_network')
+            meta_learner_type: Type of meta-learner ('lightgbm' or 'xgboost')
             use_features_in_meta: Whether to use original features in meta-learner
         """
         self.rating_ranges = rating_ranges
@@ -1405,7 +1390,7 @@ def create_stacking_model(
         n_splits: Number of cross-validation splits
         random_state: Random state for reproducibility
         optimize_meta: Whether to optimize meta-learner hyperparameters
-        meta_learner_type: Type of meta-learner ('lightgbm', 'xgboost', or 'neural_network')
+        meta_learner_type: Type of meta-learner ('lightgbm' or 'xgboost')
         use_features_in_meta: Whether to use original features in meta-learner
         model_dir: Directory to save models
 
@@ -1442,16 +1427,6 @@ def create_stacking_model(
                 'max_depth': 6,
                 'early_stopping_rounds': 50,
                 'random_state': random_state
-            }
-        ),
-        NeuralNetworkModel(
-            name="neural_network_base",
-            model_params={
-                'hidden_dims': [256, 128, 64],
-                'learning_rate': 0.001,
-                'batch_size': 256,
-                'epochs': 100,
-                'patience': 10
             }
         )
     ]
@@ -1497,8 +1472,6 @@ def create_stacking_model(
             meta_learner = LightGBMModel(name="meta_learner_optimized", model_params=best_params)
         elif meta_learner_type == 'xgboost':
             meta_learner = XGBoostModel(name="meta_learner_optimized", model_params=best_params)
-        elif meta_learner_type == 'neural_network':
-            meta_learner = NeuralNetworkModel(name="meta_learner_optimized", model_params=best_params)
 
     # Create stacking model
     stacking_model = StackingModel(
