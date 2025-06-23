@@ -14,11 +14,11 @@ training:
 
 # Autoencoder configuration
 autoencoder:
-  epochs: 40
+  epochs: 100
   batch_size_per_gpu: 2048
   learning_rate: 1.0e-3
   valid_split: 0.1
-  early_stopping_patience: 5
+  early_stopping_patience: 20
   model_save_dir: "trained_models_no_engine_direct_v1"
   force_retrain: false
   embedding_dim: 16
