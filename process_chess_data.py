@@ -129,6 +129,12 @@ def main():
     # Add idx column
     logger.info("Adding idx column")
     combined_df['idx'] = range(len(combined_df))
+
+    # Move idx column to the beginning
+    cols = combined_df.columns.tolist()
+    cols = ['idx'] + [col for col in cols if col != 'idx']
+    combined_df = combined_df[cols]
+
     logger.info(f"Final data shape: {combined_df.shape}")
 
     # Save the combined dataset
