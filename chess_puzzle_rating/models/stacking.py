@@ -207,7 +207,8 @@ class XGBoostModel(BaseModel):  # Assuming BaseModel is defined elsewhere
         self.eval_metric = self.model_params.pop('eval_metric', None)
         # Initialize XGBoost model
         self.model = xgb.XGBRegressor(**self.model_params)
-        self.best_iteration = self.model.best_iteration
+        # Initialize best_iteration to None, will be set after fitting
+        self.best_iteration = None
 
     def fit(self, X: pd.DataFrame, y: pd.Series, eval_set: List[Tuple[pd.DataFrame, pd.Series]] = None) -> 'XGBoostModel':
         """
@@ -248,6 +249,10 @@ class XGBoostModel(BaseModel):  # Assuming BaseModel is defined elsewhere
         # Store feature importances
         self.feature_importances_ = self.model.feature_importances_
 
+        # Update best_iteration after fitting
+        if hasattr(self.model, 'best_iteration'):
+            self.best_iteration = self.model.best_iteration
+
         return self
 
     def predict(self, X: pd.DataFrame) -> np.ndarray:
@@ -262,7 +267,9 @@ class XGBoostModel(BaseModel):  # Assuming BaseModel is defined elsewhere
         """
         # In newer versions of XGBoost, best_ntree_limit is deprecated
         # Use iteration_range instead if best_iteration is available
-        if hasattr(self.model, 'best_iteration') and self.model.best_iteration is not None:
+        if self.best_iteration is not None:
+            return self.model.predict(X, iteration_range=(0, self.best_iteration))
+        elif hasattr(self.model, 'best_iteration') and self.model.best_iteration is not None:
             return self.model.predict(X, iteration_range=(0, self.model.best_iteration))
         else:
             return self.model.predict(X)
@@ -288,6 +295,13 @@ class XGBoostModel(BaseModel):  # Assuming BaseModel is defined elsewhere
         """
         self.model = xgb.Booster()
         self.model.load_model(path)
+
+        # Try to get best_iteration from the loaded model
+        if hasattr(self.model, 'best_iteration'):
+            self.best_iteration = self.model.best_iteration
+        else:
+            self.best_iteration = None
+
         return self
 
 
