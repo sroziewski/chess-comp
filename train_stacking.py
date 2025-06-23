@@ -3,6 +3,10 @@ Training script for model stacking approach to chess puzzle rating prediction.
 
 This script demonstrates how to use the stacking model implementation to combine
 multiple base models (LightGBM, XGBoost, Neural Networks) for improved prediction accuracy.
+
+This version has been adapted to work with final_dataset.csv, which already contains all
+computed features. The feature computation parts have been removed, but the autoencoder
+functionality for success probability features has been preserved.
 """
 
 import os
@@ -33,10 +37,9 @@ from chess_puzzle_rating.models.stacking import (
     StackingModel, RangeSpecificStackingModel, create_stacking_model
 )
 
-# --- Feature Engineering Functions ---
+# --- Autoencoder Functions ---
 from train_lgbm_pt_ae_no_engine_direct import (
-    get_extended_fen_features, get_moves_features, 
-    process_text_tags, get_success_prob_features_with_trained_ae,
+    get_success_prob_features_with_trained_ae,
     ProbAutoencoder, extract_embeddings_from_autoencoder
 )
 
@@ -135,16 +138,17 @@ if __name__ == '__main__':
     logger.info("Step 1: Loading data...")
     data_load_start = time.time()
 
-    train_df_orig = pd.read_csv(TRAIN_FILE)
-    test_df_orig = pd.read_csv(TEST_FILE)
+    # Load final_dataset.csv which already contains all features
+    logger.info("Loading final_dataset.csv which already contains all features...")
+    combined_df = pd.read_csv('final_dataset.csv')
+
+    # Split into train and test sets
+    train_df_orig = combined_df[combined_df['is_train'] == 1].copy()
+    test_df_orig = combined_df[combined_df['is_train'] == 0].copy()
     test_puzzle_ids = test_df_orig['PuzzleId']
-    train_df_orig['is_train'] = 1
-    test_df_orig['is_train'] = 0
 
     if 'Rating' not in test_df_orig.columns:
         test_df_orig['Rating'] = np.nan
-
-    combined_df = pd.concat([train_df_orig, test_df_orig], ignore_index=True, sort=False)
 
     data_load_time = time.time() - data_load_start
     logger.info(f"Data loaded in {data_load_time:.2f} seconds")
@@ -210,41 +214,9 @@ if __name__ == '__main__':
         elif model_var_name == "trained_blitz_ae":
             trained_blitz_ae = current_ae_model
 
-    # Step 3: Feature Engineering
-    logger.info("Step 3: Feature Engineering...")
+    # Step 3: Feature Engineering (only autoencoder)
+    logger.info("Step 3: Feature Engineering (only autoencoder, other features already computed)...")
     feature_engineering_start = time.time()
-
-    # FEN features
-    logger.info("Extracting FEN features...")
-    fen_features_df = pd.DataFrame(combined_df['FEN'].progress_apply(get_extended_fen_features).tolist(),
-                                   index=combined_df.index)
-    combined_df = pd.concat([combined_df, fen_features_df], axis=1)
-    del fen_features_df
-    gc.collect()
-
-    # Moves features
-    logger.info("Extracting moves features...")
-    moves_features_df = pd.DataFrame(combined_df['Moves'].progress_apply(get_moves_features).tolist(),
-                                     index=combined_df.index)
-    combined_df = pd.concat([combined_df, moves_features_df], axis=1)
-    del moves_features_df
-    gc.collect()
-
-    # Text vectorization
-    themes_min_df = config['feature_engineering']['text_vectorization']['themes_min_df']
-    openings_min_df = config['feature_engineering']['text_vectorization']['openings_min_df']
-
-    logger.info("Processing theme tags...")
-    themes_df = process_text_tags(combined_df['Themes'], prefix='theme', min_df=themes_min_df)
-    combined_df = pd.concat([combined_df, themes_df], axis=1)
-    del themes_df
-    gc.collect()
-
-    logger.info("Processing opening tags...")
-    openings_df = process_text_tags(combined_df['OpeningTags'], prefix='opening', min_df=openings_min_df)
-    combined_df = pd.concat([combined_df, openings_df], axis=1)
-    del openings_df
-    gc.collect()
 
     # Success probability features with autoencoder
     if trained_rapid_ae or trained_blitz_ae:
@@ -266,16 +238,6 @@ if __name__ == '__main__':
             combined_df['prob_all_mean'] = combined_df[prob_cols_all].mean(axis=1)
             combined_df['prob_all_std'] = combined_df[prob_cols_all].std(axis=1)
 
-    # Log transform for popularity and plays
-    for col in ['Popularity', 'NbPlays']:
-        if col in combined_df.columns:
-            combined_df[col] = pd.to_numeric(combined_df[col], errors='coerce').fillna(0)
-            min_val = combined_df.loc[combined_df['is_train'] == 1, col].min()
-            if min_val <= 0:
-                combined_df[f'{col}_log'] = np.log1p(combined_df[col] - (min_val if min_val < 0 else 0))
-            else:
-                combined_df[f'{col}_log'] = np.log(combined_df[col])
-
     feature_engineering_time = time.time() - feature_engineering_start
     logger.info(f"Feature engineering completed in {feature_engineering_time:.2f} seconds")
     record_metric("feature_engineering_time", feature_engineering_time, "performance")
@@ -283,24 +245,19 @@ if __name__ == '__main__':
     # Step 4: Prepare data for model training
     logger.info("Step 4: Preparing data for model training...")
     target_col = 'Rating'
-    original_cols_to_drop = ['PuzzleId', 'FEN', 'Moves', 'Themes', 'GameUrl', 'OpeningTags']
 
-    if 'Popularity_log' in combined_df.columns:
-        original_cols_to_drop.append('Popularity')
-    if 'NbPlays_log' in combined_df.columns:
-        original_cols_to_drop.append('NbPlays')
+    # Columns to exclude from features
+    cols_to_drop = ['PuzzleId', 'FEN', 'Moves', 'Rating', 'is_train']
 
-    feature_columns = [col for col in combined_df.columns if
-                       col not in [target_col, 'is_train'] + original_cols_to_drop]
-    numeric_feature_columns = []
-
-    for col in feature_columns:
-        if pd.api.types.is_numeric_dtype(combined_df[col]):
-            numeric_feature_columns.append(col)
-        else:
+    # Use all numeric columns as features except those in cols_to_drop
+    feature_columns = []
+    for col in combined_df.columns:
+        if col not in cols_to_drop and pd.api.types.is_numeric_dtype(combined_df[col]):
+            feature_columns.append(col)
+        elif col not in cols_to_drop and not pd.api.types.is_numeric_dtype(combined_df[col]):
             logger.warning(f"Dropping non-numeric feature: {col} (dtype: {combined_df[col].dtype})")
 
-    feature_columns = numeric_feature_columns
+    logger.info(f"Using {len(feature_columns)} features from final_dataset.csv")
     train_processed_df = combined_df[combined_df['is_train'] == 1].copy()
     test_processed_df = combined_df[combined_df['is_train'] == 0].copy()
     X_train = train_processed_df[feature_columns].astype(np.float32)
