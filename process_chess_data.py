@@ -85,18 +85,20 @@ def main():
     # Get all success_prob_* columns from training data
     success_prob_cols = [col for col in train_df.columns if col.startswith('success_prob_')]
     # Add other required columns
-    required_cols = ['PuzzleId', 'FEN', 'Moves'] + success_prob_cols
-    
+    required_cols = ['PuzzleId', 'FEN', 'Moves', 'Rating'] + success_prob_cols
+
     # Check if all required columns exist in training data
     missing_cols = [col for col in required_cols if col not in train_df.columns]
     if missing_cols:
         logger.warning(f"The following required columns are missing from training data: {', '.join(missing_cols)}")
         # Remove missing columns from required_cols
         required_cols = [col for col in required_cols if col not in missing_cols]
-        
+
     # Extract the required columns from training data
     train_features = train_df[required_cols].copy()
-    logger.info(f"Extracted {len(required_cols)} columns from training data")
+    # Add is_train column to training data (1 = train)
+    train_features['is_train'] = 1
+    logger.info(f"Extracted {len(required_cols)} columns from training data and added is_train column")
 
     # Extract required columns from testing data
     logger.info("Extracting required columns from testing data")
@@ -108,10 +110,12 @@ def main():
         common_cols = [col for col in required_cols if col not in missing_cols]
         train_features = train_features[common_cols].copy()
         required_cols = common_cols
-        
+
     # Extract the required columns from testing data
     test_features = test_df[required_cols].copy()
-    logger.info(f"Extracted {len(required_cols)} columns from testing data")
+    # Add is_train column to testing data (0 = test)
+    test_features['is_train'] = 0
+    logger.info(f"Extracted {len(required_cols)} columns from testing data and added is_train column")
 
     # Concatenate training and testing data
     logger.info("Concatenating training and testing data")
