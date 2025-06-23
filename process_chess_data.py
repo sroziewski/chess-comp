@@ -96,9 +96,7 @@ def main():
 
     # Extract the required columns from training data
     train_features = train_df[required_cols].copy()
-    # Add is_train column to training data (1 = train)
-    train_features['is_train'] = 1
-    logger.info(f"Extracted {len(required_cols)} columns from training data and added is_train column")
+    logger.info(f"Extracted {len(required_cols)} columns from training data")
 
     # Extract required columns from testing data
     logger.info("Extracting required columns from testing data")
@@ -113,14 +111,20 @@ def main():
 
     # Extract the required columns from testing data
     test_features = test_df[required_cols].copy()
-    # Add is_train column to testing data (0 = test)
-    test_features['is_train'] = 0
-    logger.info(f"Extracted {len(required_cols)} columns from testing data and added is_train column")
+    logger.info(f"Extracted {len(required_cols)} columns from testing data")
 
     # Concatenate training and testing data
     logger.info("Concatenating training and testing data")
     combined_df = pd.concat([train_features, test_features], ignore_index=True)
     logger.info(f"Combined data shape: {combined_df.shape}")
+
+    # Add is_train column based on whether Rating column has a value
+    logger.info("Adding is_train column based on whether Rating column has a value")
+    if 'Rating' in combined_df.columns:
+        combined_df['is_train'] = combined_df['Rating'].notna().astype(int)
+        logger.info(f"Added is_train column: {sum(combined_df['is_train'] == 1)} train samples, {sum(combined_df['is_train'] == 0)} test samples")
+    else:
+        logger.warning("Rating column not found, cannot set is_train column based on Rating values")
 
     # Add idx column
     logger.info("Adding idx column")
