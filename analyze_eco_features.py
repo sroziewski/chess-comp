@@ -144,7 +144,7 @@ def main():
     # Define the path to the CSV file
     # Note: In a real scenario, you would use the actual path from the issue description
     # For Windows, we'll use a relative path
-    data_dir = Path("data/eco_code_features")
+    data_dir = Path("/raid/sroziewski/dev/chess-comp/data/eco_code_features")
     csv_path = data_dir / "eco_code_features_latest.csv"
     
     # Create the directory if it doesn't exist
