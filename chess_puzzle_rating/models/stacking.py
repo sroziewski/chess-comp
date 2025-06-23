@@ -189,7 +189,7 @@ class LightGBMModel(BaseModel):
         return self
 
 
-class XGBoostModel(BaseModel):
+class XGBoostModel(BaseModel):  # Assuming BaseModel is defined elsewhere
     """XGBoost model implementation."""
 
     def __init__(self, name: str = "xgboost", model_params: Dict[str, Any] = None):
@@ -200,11 +200,12 @@ class XGBoostModel(BaseModel):
             name: Name of the model
             model_params: Parameters for the model
         """
-        super().__init__(name, model_params)
+        super().__init__(name, model_params or {})  # Handle None for model_params
         # Store early_stopping_rounds for use in fit method
         self.early_stopping_rounds = self.model_params.pop('early_stopping_rounds', 50)
-        # Remove eval_metric from model_params to avoid it being passed to fit() method
+        # Remove eval_metric from model_params to avoid issues
         self.eval_metric = self.model_params.pop('eval_metric', None)
+        # Initialize XGBoost model
         self.model = xgb.XGBRegressor(**self.model_params)
 
     def fit(self, X: pd.DataFrame, y: pd.Series, eval_set: List[Tuple[pd.DataFrame, pd.Series]] = None) -> 'XGBoostModel':
@@ -219,19 +220,30 @@ class XGBoostModel(BaseModel):
         Returns:
             self: The fitted model
         """
-        # Pass early_stopping_rounds directly as a parameter
-        fit_params = {
-            'eval_set': eval_set,
-            'verbose': False
-        }
+        # Validate inputs
+        if not isinstance(X, pd.DataFrame) or not isinstance(y, pd.Series):
+            raise ValueError("X must be a pandas DataFrame and y must be a pandas Series")
 
+        # Prepare fit parameters
         if eval_set is not None:
-            fit_params['early_stopping_rounds'] = self.early_stopping_rounds
+            # Validate eval_set
+            if not isinstance(eval_set, list) or not all(
+                isinstance(t, tuple) and len(t) == 2 and isinstance(t[0], pd.DataFrame) and isinstance(t[1], pd.Series)
+                for t in eval_set
+            ):
+                raise ValueError("eval_set must be a list of tuples [(X_valid, y_valid), ...]")
 
-        self.model.fit(
-            X, y,
-            **fit_params
-        )
+            # Fit with early stopping
+            self.model.fit(
+                X,
+                y,
+                eval_set=eval_set,
+                early_stopping_rounds=self.early_stopping_rounds,
+                verbose=False
+            )
+        else:
+            # Fit without early stopping
+            self.model.fit(X, y, verbose=False)
 
         # Store feature importances
         self.feature_importances_ = self.model.feature_importances_
