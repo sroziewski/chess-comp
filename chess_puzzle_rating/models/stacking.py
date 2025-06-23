@@ -222,7 +222,7 @@ class XGBoostModel(BaseModel):
         # Create callbacks for early stopping
         callbacks = None
         if eval_set is not None:
-            callbacks = [xgb.callback.EarlyStopping(rounds=self.early_stopping_rounds, verbose=False)]
+            callbacks = [xgb.callback.EarlyStopping(rounds=self.early_stopping_rounds)]
 
         self.model.fit(
             X, y,
