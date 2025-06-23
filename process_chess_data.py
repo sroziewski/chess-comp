@@ -85,7 +85,13 @@ def main():
     # Get all success_prob_* columns from training data
     success_prob_cols = [col for col in train_df.columns if col.startswith('success_prob_')]
     # Add other required columns
-    required_cols = ['PuzzleId', 'FEN', 'Moves', 'Rating'] + success_prob_cols
+    required_cols = ['PuzzleId', 'FEN', 'Moves'] + success_prob_cols
+
+    # Check if Rating column exists in training data
+    if 'Rating' in train_df.columns:
+        required_cols.append('Rating')
+    else:
+        logger.warning("Rating column not found in training data")
 
     # Check if all required columns exist in training data
     missing_cols = [col for col in required_cols if col not in train_df.columns]
@@ -118,18 +124,34 @@ def main():
     combined_df = pd.concat([train_features, test_features], ignore_index=True)
     logger.info(f"Combined data shape: {combined_df.shape}")
 
-    # Add Rating column if it doesn't exist
-    if 'Rating' not in combined_df.columns:
-        logger.info("Adding Rating column with empty values")
-        combined_df['Rating'] = np.nan
-
-    # Add is_train column
-    logger.info("Adding is_train column")
-    # Set is_train based on the source of the data
-    # We know the first len(train_features) rows are from the training data
+    # Add is_train column first based on the source of the data
+    logger.info("Adding is_train column based on the source of the data")
     combined_df['is_train'] = 0
     combined_df.loc[:len(train_features)-1, 'is_train'] = 1
-    logger.info(f"Added is_train column: {sum(combined_df['is_train'] == 1)} train samples, {sum(combined_df['is_train'] == 0)} test samples")
+
+    # Handle Rating column
+    if 'Rating' not in combined_df.columns:
+        logger.info("Rating column not found, adding it with default values")
+        # For rows with is_train=1, set Rating to a default value (e.g., the mean rating from training data)
+        # For rows with is_train=0, set Rating to NaN
+        default_rating = 1500  # A reasonable default rating
+        combined_df['Rating'] = np.nan
+        combined_df.loc[combined_df['is_train'] == 1, 'Rating'] = default_rating
+        logger.info(f"Added Rating column with default value {default_rating} for training samples")
+    else:
+        # Ensure that all rows with is_train=1 have a non-empty Rating value
+        missing_ratings = (combined_df['is_train'] == 1) & (combined_df['Rating'].isna())
+        if missing_ratings.any():
+            logger.warning(f"Found {missing_ratings.sum()} training samples with missing Rating values")
+            # Calculate the mean rating from the training samples that have a rating
+            mean_rating = combined_df.loc[(combined_df['is_train'] == 1) & (~combined_df['Rating'].isna()), 'Rating'].mean()
+            if np.isnan(mean_rating):
+                mean_rating = 1500  # Fallback to a default value if no ratings are available
+            # Fill missing ratings with the mean rating
+            combined_df.loc[missing_ratings, 'Rating'] = mean_rating
+            logger.info(f"Filled missing Rating values with {mean_rating}")
+
+    logger.info(f"Final is_train distribution: {sum(combined_df['is_train'] == 1)} train samples, {sum(combined_df['is_train'] == 0)} test samples")
 
     # Add idx column
     logger.info("Adding idx column")
