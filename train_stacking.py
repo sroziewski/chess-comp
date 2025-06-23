@@ -313,12 +313,12 @@ if __name__ == '__main__':
 
     # Neural Network base model
     nn_params = base_model_params.get('neural_network', {})
-    base_models.append(
-        NeuralNetworkModel(
-            name="neural_network_base",
-            model_params=nn_params
-        )
-    )
+    # base_models.append(
+    #     NeuralNetworkModel(
+    #         name="neural_network_base",
+    #         model_params=nn_params
+    #     )
+    # )
 
     logger.info(f"Created {len(base_models)} base models with parameters from config")
 
