@@ -85,7 +85,7 @@ def main():
     # Get all success_prob_* columns from training data
     success_prob_cols = [col for col in train_df.columns if col.startswith('success_prob_')]
     # Add other required columns
-    required_cols = ['PuzzleId', 'FEN', 'Moves'] + success_prob_cols
+    required_cols = ['PuzzleId', 'FEN', 'Moves', 'Rating'] + success_prob_cols
 
     # Check if all required columns exist in training data
     missing_cols = [col for col in required_cols if col not in train_df.columns]
@@ -118,9 +118,14 @@ def main():
     combined_df = pd.concat([train_features, test_features], ignore_index=True)
     logger.info(f"Combined data shape: {combined_df.shape}")
 
+    # Add Rating column if it doesn't exist
+    if 'Rating' not in combined_df.columns:
+        logger.info("Adding Rating column with empty values")
+        combined_df['Rating'] = np.nan
+
     # Add is_train column
     logger.info("Adding is_train column")
-    # Since we don't have a Rating column, we'll set is_train based on the source of the data
+    # Set is_train based on the source of the data
     # We know the first len(train_features) rows are from the training data
     combined_df['is_train'] = 0
     combined_df.loc[:len(train_features)-1, 'is_train'] = 1
