@@ -171,8 +171,11 @@ stacking:
       n_estimators: 1000
       learning_rate: 0.05
       num_leaves: 31
-      max_depth: -1
+      max_depth: 10
       early_stopping_rounds: 50
+      min_child_weight: 1e-4
+      lambda_l1: 0.01,  # Light L1 regularization
+      lambda_l2: 0.01,
     # XGBoost base model parameters
     xgboost:
       n_estimators: 1000

@@ -201,6 +201,7 @@ class XGBoostModel(BaseModel):
             model_params: Parameters for the model
         """
         super().__init__(name, model_params)
+        # Store early_stopping_rounds for use in fit method
         self.early_stopping_rounds = self.model_params.pop('early_stopping_rounds', 50)
         # Remove eval_metric from model_params to avoid it being passed to fit() method
         self.eval_metric = self.model_params.pop('eval_metric', None)
@@ -218,10 +219,15 @@ class XGBoostModel(BaseModel):
         Returns:
             self: The fitted model
         """
+        # Create callbacks for early stopping
+        callbacks = None
+        if eval_set is not None:
+            callbacks = [xgb.callback.EarlyStopping(rounds=self.early_stopping_rounds, verbose=False)]
+
         self.model.fit(
             X, y,
             eval_set=eval_set,
-            early_stopping_rounds=self.early_stopping_rounds,
+            callbacks=callbacks,
             verbose=False
         )
 
