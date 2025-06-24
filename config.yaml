@@ -10,7 +10,7 @@ data_paths:
 training:
   n_splits_lgbm: 5
   random_state: 42
-  lgbm_early_stopping_rounds: 100
+  lgbm_early_stopping_rounds: 1000
 
 # Autoencoder configuration
 autoencoder:
@@ -38,7 +38,7 @@ gpu:
 lgbm_params:
   objective: "regression" # or "mse"
   metric: "rmse"
-  n_estimators: 5000
+  n_estimators: 50000
   learning_rate: 0.01
   feature_fraction: 0.7
   bagging_fraction: 0.7
