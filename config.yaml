@@ -45,13 +45,14 @@ lgbm_params:
   bagging_freq: 1
   lambda_l1: 0.1
   lambda_l2: 0.1
-  num_leaves: 128
+  num_leaves: 255
   min_child_samples: 20
   verbose: -1
   n_jobs: -1
   boosting_type: "gbdt"
   max_bin: 255
   gpu_use_dp: true
+  max_depth: 12
 
 # Feature engineering parameters
 feature_engineering:
