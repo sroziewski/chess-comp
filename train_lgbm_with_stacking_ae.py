@@ -120,14 +120,14 @@ if __name__ == '__main__':
     record_metric("device_type", "cuda" if DEVICE.type == "cuda" else "cpu", "hardware")
 
     # Step 1: Load data from final_merged_features.csv
-    logger.info("Step 1: Loading data from final_merged_features.csv...")
+    logger.info("Step 1: Loading data from final_dataset.csv..")
     data_load_start = time.time()
 
-    logger.info("Loading final_merged_features.csv...")
+    logger.info("Loading final_dataset.csv..")
     try:
-        combined_df = pd.read_csv('final_merged_features.csv')
+        combined_df = pd.read_csv('final_dataset.csv')
     except FileNotFoundError:
-        logger.error("final_merged_features.csv not found. Exiting.")
+        logger.error("final_dataset.csv not found. Exiting.")
         exit()
 
     logger.info(f"Initial combined_df shape: {combined_df.shape}")
