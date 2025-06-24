@@ -22,10 +22,10 @@ ANALYSIS_TIME_LIMIT_SECONDS = 1  # Time per FEN analysis (adjust as needed)
 # OR
 # ANALYSIS_DEPTH = 10 # Depth per FEN analysis
 
-OUTPUT_CSV_FILE = "/raid/sroziewski/chess/engine_features.csv"
-OUTPUT_TEST_CSV_FILE = "/raid/sroziewski/chess/engine_features_test.csv"
-TRAIN_FILE_INPUT = '/raid/sroziewski/chess/training_data_02_01.csv' # To get FENs from train
-TEST_FILE_INPUT = '/raid/sroziewski/chess/testing_data_cropped.csv'   # To get FENs from test
+# OUTPUT_CSV_FILE = "/raid/sroziewski/chess/engine_features.csv"
+OUTPUT_CSV_FILE = "/raid/sroziewski/chess/engine_features_test.csv"
+# TRAIN_FILE_INPUT = '/raid/sroziewski/chess/training_data_02_01.csv' # To get FENs from train
+TRAIN_FILE_INPUT = '/raid/sroziewski/chess/testing_data_cropped.csv'   # To get FENs from test
 
 
 # Number of parallel processes.
