@@ -10,7 +10,7 @@ data_paths:
 training:
   n_splits_lgbm: 5
   random_state: 42
-  lgbm_early_stopping_rounds: 1000
+  lgbm_early_stopping_rounds: 200
 
 # Autoencoder configuration
 autoencoder:
