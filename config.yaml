@@ -29,23 +29,29 @@ autoencoder:
 # GPU configuration
 gpu:
   target_num_gpus: 4
+  pytorch_target_num_gpus: 4 # Max GPUs for PyTorch DataParallel
+  lightgbm_use_gpu: true
+  lightgbm_gpu_platform_id: 0
+  lightgbm_gpu_device_id: 0 # Which GPU for LightGBM
 
 # LightGBM parameters
 lgbm_params:
-  objective: "regression"
+  objective: "regression" # or "mse"
   metric: "rmse"
-  n_estimators: 3000
+  n_estimators: 5000
   learning_rate: 0.01
   feature_fraction: 0.7
   bagging_fraction: 0.7
   bagging_freq: 1
   lambda_l1: 0.1
   lambda_l2: 0.1
-  num_leaves: 42
+  num_leaves: 128
   min_child_samples: 20
   verbose: -1
   n_jobs: -1
   boosting_type: "gbdt"
+  max_bin: 255
+  gpu_use_dp: true
 
 # Feature engineering parameters
 feature_engineering:
@@ -95,6 +101,10 @@ performance:
     n_workers: 2
     # Maximum number of threads per worker
     max_threads_per_worker: 23
+  pytorch_dataloader:
+    num_workers: 2
+  mixed_precision_pytorch: # For PyTorch training/inference
+    enabled: true
 
   # Caching settings
   caching:
@@ -138,6 +148,7 @@ progress_tracking:
 
 # Stacking model configuration
 stacking:
+  enabled: false
   # Number of cross-validation splits for stacking
   n_splits: 5
   # Whether to optimize meta-learner hyperparameters
