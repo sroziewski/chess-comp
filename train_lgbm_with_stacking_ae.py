@@ -73,7 +73,8 @@ except ImportError:
 try:
     from train_lgbm_pt_ae_no_engine_direct import (
         ProbAutoencoder, # extract_embeddings_from_autoencoder, # Not used
-        get_success_prob_features_with_trained_ae
+        get_success_prob_features_with_trained_ae,
+        train_autoencoder
     )
 except ImportError:
     print("ERROR: train_lgbm_pt_ae_no_engine_direct not found. Autoencoder features will not be available.")
@@ -82,6 +83,7 @@ except ImportError:
         def __init__(self, *args, **kwargs): super().__init__(); self.fc = torch.nn.Linear(1,1)
         def forward(self, x): return x, x
     def get_success_prob_features_with_trained_ae(*args, **kwargs): return pd.DataFrame()
+    def train_autoencoder(*args, **kwargs): return None
 
 
 # --- Progress Bar Import ---
@@ -119,6 +121,15 @@ LGBM_EARLY_STOPPING_ROUNDS = config['training']['lgbm_early_stopping_rounds']
 MODEL_SAVE_DIR = config['autoencoder']['model_save_dir']
 AE_MODEL_SAVE_DIR = os.path.join(MODEL_SAVE_DIR, "autoencoders")
 LGBM_MODEL_SAVE_DIR = os.path.join(MODEL_SAVE_DIR, "lightgbm_folds_with_stacking_ae")
+
+# --- PyTorch Autoencoder Training Config ---
+AE_EPOCHS = config['autoencoder'].get('epochs', 50)
+AE_LEARNING_RATE = config['autoencoder'].get('learning_rate', 0.001)
+AE_VALID_SPLIT = config['autoencoder'].get('valid_split', 0.2)
+AE_EARLY_STOPPING_PATIENCE = config['autoencoder'].get('early_stopping_patience', 10)
+FORCE_RETRAIN_AES = config['autoencoder'].get('force_retrain', False)
+PROB_SEQ_LENGTH = config['autoencoder'].get('sequence_length', 20)
+EMBEDDING_DIM_PROB = config['autoencoder'].get('embedding_dim', 32)
 
 os.makedirs(AE_MODEL_SAVE_DIR, exist_ok=True)
 os.makedirs(LGBM_MODEL_SAVE_DIR, exist_ok=True)
@@ -185,28 +196,57 @@ if __name__ == '__main__':
     record_metric("data_load_time", data_load_time, "performance")
     # ... (other initial record_metric calls)
 
-    logger.info("Step 2: Loading autoencoders...")
+    logger.info("Step 2: Loading or training autoencoders...")
     prob_cols_all = [col for col in combined_df.columns if 'success_prob_' in col]
+    rapid_prob_cols_all = sorted([col for col in prob_cols_all if 'rapid' in col], key=lambda x: int(x.split('_')[-1]))
+    blitz_prob_cols_all = sorted([col for col in prob_cols_all if 'blitz' in col], key=lambda x: int(x.split('_')[-1]))
     trained_rapid_ae, trained_blitz_ae = None, None
-    # ... (AE loading logic - kept concise, assume it's as before)
-    for ae_type, save_path_suffix, model_var_name in [
-        ("RapidProbAE", "rapid_ae_best.pth", "trained_rapid_ae"),
-        ("BlitzProbAE", "blitz_ae_best.pth", "trained_blitz_ae")
+
+    for ae_type, prob_cols_subset, save_path_suffix, model_var_name in [
+        ("RapidProbAE", rapid_prob_cols_all, "rapid_ae_best.pth", "trained_rapid_ae"),
+        ("BlitzProbAE", blitz_prob_cols_all, "blitz_ae_best.pth", "trained_blitz_ae")
     ]:
         save_path = os.path.join(AE_MODEL_SAVE_DIR, save_path_suffix)
-        if os.path.exists(save_path):
+        current_ae_model = None
+
+        if os.path.exists(save_path) and not FORCE_RETRAIN_AES:
             logger.info(f"Loading pre-trained {ae_type} model from {save_path}...")
             try:
                 current_ae_model = ProbAutoencoder().to(DEVICE)
                 current_ae_model.load_state_dict(torch.load(save_path, map_location=DEVICE))
                 current_ae_model.eval()
-                if model_var_name == "trained_rapid_ae": trained_rapid_ae = current_ae_model
-                elif model_var_name == "trained_blitz_ae": trained_blitz_ae = current_ae_model
                 logger.info(f"{ae_type} model loaded successfully.")
             except Exception as e:
                 logger.error(f"Error loading {ae_type} model from {save_path}: {e}")
-        else:
-            logger.warning(f"Pre-trained {ae_type} model not found at {save_path}.")
+                current_ae_model = None
+
+        # If model wasn't loaded successfully and we have the required data, train a new one
+        if current_ae_model is None and prob_cols_subset and len(prob_cols_subset) == PROB_SEQ_LENGTH:
+            logger.info(f"Pre-trained {ae_type} model not found or couldn't be loaded. Training a new one...")
+            # Ensure we use .dropna() on the correct subset of columns before .values
+            seq_data_all_for_current_ae = combined_df[prob_cols_subset].dropna().values.astype(np.float32)
+            if seq_data_all_for_current_ae.shape[0] > AE_TOTAL_BATCH_SIZE:
+                from torch.utils.data import TensorDataset, DataLoader
+                X_tr, X_val = train_test_split(seq_data_all_for_current_ae, test_size=AE_VALID_SPLIT,
+                                               random_state=RANDOM_STATE)
+                loader_tr = DataLoader(TensorDataset(torch.from_numpy(X_tr)), batch_size=AE_TOTAL_BATCH_SIZE,
+                                       shuffle=True, num_workers=2, pin_memory=(DEVICE.type == 'cuda'))
+                loader_val = DataLoader(TensorDataset(torch.from_numpy(X_val)), batch_size=AE_TOTAL_BATCH_SIZE,
+                                        shuffle=False, num_workers=2, pin_memory=(DEVICE.type == 'cuda'))
+                base_ae_model = ProbAutoencoder().to(DEVICE)
+                current_ae_model = train_autoencoder(base_ae_model, loader_tr, loader_val, AE_EPOCHS, AE_LEARNING_RATE,
+                                                     AE_EARLY_STOPPING_PATIENCE, save_path, ae_type)
+                if current_ae_model:
+                    logger.info(f"{ae_type} model trained and saved successfully.")
+                else:
+                    logger.error(f"Failed to train {ae_type} model.")
+            else:
+                logger.warning(f"Not enough {ae_type.split('ProbAE')[0]} data for AE training (found {seq_data_all_for_current_ae.shape[0]} sequences).")
+        elif current_ae_model is None:
+            logger.warning(f"{ae_type.split('ProbAE')[0]} prob columns not found/wrong length for AE.")
+
+        if model_var_name == "trained_rapid_ae": trained_rapid_ae = current_ae_model
+        elif model_var_name == "trained_blitz_ae": trained_blitz_ae = current_ae_model
 
 
     logger.info("Step 3: Extracting autoencoder features...")
