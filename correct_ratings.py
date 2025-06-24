@@ -28,6 +28,46 @@ from chess_puzzle_rating.utils.progress import track_progress, get_logger
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+def process_chunk(chunk_df: pd.DataFrame, training_ratings: Dict[Any, float]) -> Tuple[pd.DataFrame, Dict[Any, Tuple[float, float]], int]:
+    """
+    Process a chunk of the dataframe to swap Rating values.
+
+    Parameters
+    ----------
+    chunk_df : pd.DataFrame
+        A chunk of the dataframe to process
+    training_ratings : Dict[Any, float]
+        Dictionary mapping PuzzleId to Rating from training data
+
+    Returns
+    -------
+    Tuple[pd.DataFrame, Dict[Any, Tuple[float, float]], int]
+        Processed dataframe chunk, dictionary of swapped ratings, and count of updated rows
+    """
+    chunk_swapped_ratings = {}
+    chunk_rows_updated = 0
+
+    # Create a copy of the chunk to modify
+    chunk_result = chunk_df.copy()
+
+    # For each row in the chunk, check if PuzzleId exists in training data
+    for idx, row in chunk_df.iterrows():
+        puzzle_id = row['PuzzleId']
+
+        # Check if puzzle_id exists in training_ratings dictionary
+        if puzzle_id in training_ratings:
+            chunk_rows_updated += 1
+            # Get the Rating from training data
+            training_rating = training_ratings[puzzle_id]
+            # Store the original Rating from final dataset
+            final_rating = row['Rating']
+            # Swap the Rating values
+            chunk_result.at[idx, 'Rating'] = training_rating
+            # Store the swapped rating for logging
+            chunk_swapped_ratings[puzzle_id] = (final_rating, training_rating)
+
+    return chunk_result, chunk_swapped_ratings, chunk_rows_updated
+
 def main():
     """Main function to correct Rating values in final_dataset.csv."""
     # Define paths to data files
@@ -107,44 +147,6 @@ def main():
     chunk_size = max(1, math.ceil(total_rows / (max_workers * 10)))
     logger.info(f"Using chunk size of {chunk_size} rows")
 
-    # Function to process a chunk of the dataframe
-    def process_chunk(chunk_df: pd.DataFrame) -> Tuple[pd.DataFrame, Dict[Any, Tuple[float, float]], int]:
-        """
-        Process a chunk of the dataframe to swap Rating values.
-
-        Parameters
-        ----------
-        chunk_df : pd.DataFrame
-            A chunk of the dataframe to process
-
-        Returns
-        -------
-        Tuple[pd.DataFrame, Dict[Any, Tuple[float, float]], int]
-            Processed dataframe chunk, dictionary of swapped ratings, and count of updated rows
-        """
-        chunk_swapped_ratings = {}
-        chunk_rows_updated = 0
-
-        # Create a copy of the chunk to modify
-        chunk_result = chunk_df.copy()
-
-        # For each row in the chunk, check if PuzzleId exists in training data
-        for idx, row in chunk_df.iterrows():
-            puzzle_id = row['PuzzleId']
-
-            # Check if puzzle_id exists in training_ratings dictionary
-            if puzzle_id in training_ratings:
-                chunk_rows_updated += 1
-                # Get the Rating from training data
-                training_rating = training_ratings[puzzle_id]
-                # Store the original Rating from final dataset
-                final_rating = row['Rating']
-                # Swap the Rating values
-                chunk_result.at[idx, 'Rating'] = training_rating
-                # Store the swapped rating for logging
-                chunk_swapped_ratings[puzzle_id] = (final_rating, training_rating)
-
-        return chunk_result, chunk_swapped_ratings, chunk_rows_updated
 
     # Split the dataframe into chunks
     logger.info("Splitting dataframe into chunks for parallel processing")
@@ -162,7 +164,7 @@ def main():
     # Use ProcessPoolExecutor for parallel processing
     with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as executor:
         # Submit all chunks for processing
-        futures = [executor.submit(process_chunk, chunk) for chunk in chunks]
+        futures = [executor.submit(process_chunk, chunk, training_ratings) for chunk in chunks]
 
         # Process results as they complete with progress tracking
         for future in track_progress(
