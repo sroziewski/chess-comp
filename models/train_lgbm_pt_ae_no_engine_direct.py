@@ -128,12 +128,12 @@ def train_autoencoder(auto_model_base, train_loader, val_loader, epochs, lr, pat
     epochs_no_improve = 0
     print(f"\n--- Training {model_name} on {DEVICE if not isinstance(auto_model_train, nn.DataParallel) else 'multiple GPUs'} ---")
     print(f"Model will be saved to: {model_save_path}")
-    
+
     for epoch in range(epochs):
         auto_model_train.train()
         train_loss = 0.0
         progress_bar_train = tqdm(train_loader, desc=f"Epoch {epoch+1}/{epochs} [T]", leave=False, unit="batch")
-        
+
         for data_batch in progress_bar_train:
             inputs = data_batch[0].to(DEVICE)
             optimizer.zero_grad()
@@ -143,12 +143,12 @@ def train_autoencoder(auto_model_base, train_loader, val_loader, epochs, lr, pat
             optimizer.step()
             train_loss += loss.item() * inputs.size(0)
             progress_bar_train.set_postfix({'train_loss': f'{loss.item():.4f}'})
-        
+
         train_loss /= len(train_loader.dataset)
         auto_model_train.eval()
         val_loss = 0.0
         progress_bar_val = tqdm(val_loader, desc=f"Epoch {epoch+1}/{epochs} [V]", leave=False, unit="batch")
-        
+
         with torch.no_grad():
             for data_batch in progress_bar_val:
                 inputs = data_batch[0].to(DEVICE)
@@ -156,10 +156,10 @@ def train_autoencoder(auto_model_base, train_loader, val_loader, epochs, lr, pat
                 loss = criterion(reconstructions, inputs)
                 val_loss += loss.item() * inputs.size(0)
                 progress_bar_val.set_postfix({'val_loss': f'{loss.item():.4f}'})
-        
+
         val_loss /= len(val_loader.dataset)
         tqdm.write(f"Epoch {epoch+1}/{epochs} - Train Loss: {train_loss:.6f}, Val Loss: {val_loss:.6f}")
-        
+
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             model_to_save_state = auto_model_train.module.state_dict() if isinstance(auto_model_train, nn.DataParallel) else auto_model_train.state_dict()
@@ -169,11 +169,11 @@ def train_autoencoder(auto_model_base, train_loader, val_loader, epochs, lr, pat
         else:
             epochs_no_improve += 1
             tqdm.write(f"Val loss not improved for {epochs_no_improve} epoch(s).")
-        
+
         if epochs_no_improve >= patience:
             tqdm.write(f"AE Early stopping: {epoch+1} epochs.")
             break
-    
+
     print(f"--- Training for {model_name} finished. ---")
     print(f"Loading best AE model from {model_save_path} (Best Val Loss Recorded: {best_val_loss:.6f})")
     auto_model_base.load_state_dict(torch.load(model_save_path, map_location=DEVICE))
@@ -195,7 +195,7 @@ def get_chevy_features_for_color(board, color_to_eval, prefix):
     except Exception as e_ks:
         # print(f"DEBUG: Chevy KingSafety error for FEN {board.fen()}, Color {color_to_eval}, Prefix {prefix}: {e_ks}")
         pass  # Continue if a specific Chevy part fails
-    
+
     try:
         ps = PawnStructure(board, color=color_to_eval)
         features[prefix + 'passed_pawns'] = ps.passed_pawns
@@ -205,7 +205,7 @@ def get_chevy_features_for_color(board, color_to_eval, prefix):
     except Exception as e_ps:
         # print(f"DEBUG: Chevy PawnStructure error for FEN {board.fen()}, Color {color_to_eval}, Prefix {prefix}: {e_ps}")
         pass
-    
+
     try:
         bf = BoardFeatures(board, color=color_to_eval)
         features[prefix + 'bishop_pair'] = int(bf.bishop_pair)
@@ -217,7 +217,7 @@ def get_chevy_features_for_color(board, color_to_eval, prefix):
     except Exception as e_bf:
         # print(f"DEBUG: Chevy BoardFeatures error for FEN {board.fen()}, Color {color_to_eval}, Prefix {prefix}: {e_bf}")
         pass
-    
+
     return features  # Always return a dictionary
 
 
@@ -225,7 +225,7 @@ def get_material_and_piece_counts(board, color_to_eval, prefix):
     features = {}
     material = 0
     piece_values = {chess.PAWN: 1, chess.KNIGHT: 3, chess.BISHOP: 3, chess.ROOK: 5, chess.QUEEN: 9}
-    
+
     try:
         for piece_type in chess.PIECE_TYPES:
             count = len(board.pieces(piece_type, color_to_eval))
@@ -236,7 +236,7 @@ def get_material_and_piece_counts(board, color_to_eval, prefix):
     except Exception as e_mat:
         # print(f"DEBUG: Material count error for FEN {board.fen()}, Color {color_to_eval}, Prefix {prefix}: {e_mat}")
         pass  # Default material to 0 and counts to potentially 0 or missing
-    
+
     return features
 
 
@@ -247,9 +247,9 @@ def get_extended_fen_features(fen_string):
     except ValueError:
         # print(f"DEBUG: Invalid FEN skipped: {fen_string}")
         return {}  # Return empty dict for invalid FENs, FE will result in NaNs for these rows
-    
+
     active_color, opponent_color = board.turn, not board.turn
-    
+
     active_chevy_data = get_chevy_features_for_color(board, active_color, 'active_')
     all_features.update(active_chevy_data)  # Safe as get_chevy_features_for_color always returns dict
 
@@ -258,18 +258,18 @@ def get_extended_fen_features(fen_string):
 
     active_material_data = get_material_and_piece_counts(board, active_color, 'active_')
     all_features.update(active_material_data)
-    
+
     opponent_material_data = get_material_and_piece_counts(board, opponent_color, 'opponent_')
     all_features.update(opponent_material_data)
 
     all_features['material_diff'] = all_features.get('active_material', 0) - all_features.get('opponent_material', 0)
     all_features['total_material'] = all_features.get('active_material', 0) + all_features.get('opponent_material', 0)
-    
+
     try:
         all_features['active_player_legal_moves'] = len(list(board.legal_moves))
     except Exception:
         all_features['active_player_legal_moves'] = 0
-    
+
     all_features['can_castle_WK'] = int(board.has_kingside_castling_rights(chess.WHITE))
     all_features['can_castle_WQ'] = int(board.has_queenside_castling_rights(chess.WHITE))
     all_features['can_castle_BK'] = int(board.has_kingside_castling_rights(chess.BLACK))
@@ -277,7 +277,7 @@ def get_extended_fen_features(fen_string):
     all_features['active_player_is_white'] = int(active_color == chess.WHITE)
     all_features['halfmove_clock'] = board.halfmove_clock
     all_features['fullmove_number'] = board.fullmove_number
-    
+
     return all_features
 
 
@@ -289,13 +289,13 @@ def get_moves_features(moves_string):
             'solution_num_checks': 0,
             'solution_is_checkmate': 0
         }
-    
+
     solution_half_moves = moves_string.split(' ')
     features = {'solution_num_half_moves': len(solution_half_moves)}
     features['solution_num_captures'] = sum(1 for m in solution_half_moves if 'x' in m)
     features['solution_num_checks'] = sum(1 for m in solution_half_moves if '+' in m)
     features['solution_is_checkmate'] = int('#' in solution_half_moves[-1]) if solution_half_moves else 0
-    
+
     return features
 
 
@@ -305,7 +305,7 @@ def extract_embeddings_from_autoencoder(autoencoder_model, sequences_np, current
     if autoencoder_model is None:  # Handle case where AE was not trained/loaded
         print("Warning: Autoencoder model is None in extract_embeddings_from_autoencoder. Returning empty array.")
         return np.array([])
-        
+
     if sequences_np.shape[0] == 0:
         out_dim = autoencoder_model.module.encoder_fc.out_features if isinstance(autoencoder_model, nn.DataParallel) else autoencoder_model.encoder_fc.out_features
         return np.array([]).reshape(0, out_dim)
@@ -315,64 +315,69 @@ def extract_embeddings_from_autoencoder(autoencoder_model, sequences_np, current
     if num_gpus_for_inference > 1 and DEVICE_IDS and not isinstance(autoencoder_model, nn.DataParallel):
         print(f"Wrapping AE model with DataParallel for inference on GPUs: {DEVICE_IDS}")
         model_for_inference = nn.DataParallel(autoencoder_model, device_ids=DEVICE_IDS)
-    
+
     actual_inference_batch_size = batch_size_per_gpu * num_gpus_for_inference if isinstance(model_for_inference, nn.DataParallel) else batch_size_per_gpu
-    
+
     dataset = TensorDataset(torch.tensor(sequences_np, dtype=torch.float32))
     loader = DataLoader(dataset, batch_size=actual_inference_batch_size, shuffle=False, num_workers=2, pin_memory=(current_device.type == 'cuda'))
     all_embeddings_list = []
     model_for_inference.eval()
-    
+
     with torch.no_grad():
         for batch_data_tuple in tqdm(loader, desc="Extracting Embeddings", leave=False, unit="batch"):
             inputs = batch_data_tuple[0].to(current_device)
             _, embeddings = model_for_inference(inputs)
             all_embeddings_list.append(embeddings.cpu().numpy())
-    
+
     if not all_embeddings_list:
         out_dim = autoencoder_model.encoder_fc.out_features  # Access from base model
         return np.array([]).reshape(0, out_dim)
-    
+
     return np.concatenate(all_embeddings_list, axis=0)
 
 
-def get_success_prob_features_with_trained_ae(df_in, trained_rapid_ae, trained_blitz_ae, device_for_loading):
+def get_success_prob_features_with_trained_ae(df_in, trained_rapid_ae, trained_blitz_ae, device_for_loading, batch_size=None):
     df = df_in.copy()
     prob_cols = [col for col in df.columns if 'success_prob_' in col]
     rapid_prob_cols = sorted([col for col in prob_cols if 'rapid' in col], key=lambda x: int(x.split('_')[-1]))
     blitz_prob_cols = sorted([col for col in prob_cols if 'blitz' in col], key=lambda x: int(x.split('_')[-1]))
     features_df = pd.DataFrame(index=df.index)
-    
+
     if not prob_cols:
         return features_df
-    
+
     features_df['prob_all_mean'] = df[prob_cols].mean(axis=1)
     features_df['prob_all_std'] = df[prob_cols].std(axis=1)
     features_df['prob_rapid_mean'] = df[rapid_prob_cols].mean(axis=1) if rapid_prob_cols else np.nan
     features_df['prob_blitz_mean'] = df[blitz_prob_cols].mean(axis=1) if blitz_prob_cols else np.nan
-    
+
+    # Use the provided batch_size or default to AE_BATCH_SIZE_PER_GPU
+    batch_size_per_gpu = batch_size // GPUS_TO_USE if batch_size and GPUS_TO_USE > 0 else AE_BATCH_SIZE_PER_GPU
+
     if trained_rapid_ae and rapid_prob_cols and len(rapid_prob_cols) == PROB_SEQ_LENGTH:
         rapid_sequences = df[rapid_prob_cols].dropna().values.astype(np.float32)  # dropna here too
         if rapid_sequences.shape[0] > 0:
             print("Extracting Rapid Prob Embeddings (trained AE)...")
-            rapid_embeddings_np = extract_embeddings_from_autoencoder(trained_rapid_ae, rapid_sequences, device_for_loading)
+            rapid_embeddings_np = extract_embeddings_from_autoencoder(trained_rapid_ae, rapid_sequences, device_for_loading, 
+                                                                     batch_size_per_gpu=batch_size_per_gpu)
             if rapid_embeddings_np.size > 0:  # Check if embeddings were generated
                 for i in range(rapid_embeddings_np.shape[1]):
                     features_df[f'pt_ae_rapid_emb_{i}'] = rapid_embeddings_np[:, i]
             else:
                 print("No rapid embeddings generated (empty result).")
-    
+
     if trained_blitz_ae and blitz_prob_cols and len(blitz_prob_cols) == PROB_SEQ_LENGTH:
         blitz_sequences = df[blitz_prob_cols].dropna().values.astype(np.float32)  # dropna here too
         if blitz_sequences.shape[0] > 0:
             print("Extracting Blitz Prob Embeddings (trained AE)...")
-            blitz_embeddings_np = extract_embeddings_from_autoencoder(trained_blitz_ae, blitz_sequences, device_for_loading)
+            blitz_embeddings_np = extract_embeddings_from_autoencoder(trained_blitz_ae, blitz_sequences, device_for_loading,
+                                                                     batch_size_per_gpu=batch_size_per_gpu)
             if blitz_embeddings_np.size > 0:  # Check if embeddings were generated
                 for i in range(blitz_embeddings_np.shape[1]):
                     features_df[f'pt_ae_blitz_emb_{i}'] = blitz_embeddings_np[:, i]
             else:
                 print("No blitz embeddings generated (empty result).")
-    
+
     return features_df
 
 
@@ -394,16 +399,16 @@ if __name__ == '__main__':
     test_puzzle_ids = test_df_orig['PuzzleId']
     train_df_orig['is_train'] = 1
     test_df_orig['is_train'] = 0
-    
+
     if 'Rating' not in test_df_orig.columns:
         test_df_orig['Rating'] = np.nan
-    
+
     combined_df = pd.concat([train_df_orig, test_df_orig], ignore_index=True, sort=False)
 
     prob_cols_all = [col for col in combined_df.columns if 'success_prob_' in col]
     rapid_prob_cols_all = sorted([col for col in prob_cols_all if 'rapid' in col], key=lambda x: int(x.split('_')[-1]))
     blitz_prob_cols_all = sorted([col for col in prob_cols_all if 'blitz' in col], key=lambda x: int(x.split('_')[-1]))
-    
+
     trained_rapid_ae, trained_blitz_ae = None, None
     rapid_ae_save_path = os.path.join(AE_MODEL_SAVE_DIR, "rapid_ae_best.pth")
     blitz_ae_save_path = os.path.join(AE_MODEL_SAVE_DIR, "blitz_ae_best.pth")
@@ -432,7 +437,7 @@ if __name__ == '__main__':
                 print(f"Not enough {ae_type.split('ProbAE')[0]} data for AE training (found {seq_data_all_for_current_ae.shape[0]} sequences).")
         else:
             print(f"{ae_type.split('ProbAE')[0]} prob columns not found/wrong length for AE.")
-        
+
         if model_var_name == "trained_rapid_ae":
             trained_rapid_ae = current_ae_model
         elif model_var_name == "trained_blitz_ae":
@@ -443,17 +448,17 @@ if __name__ == '__main__':
     combined_df = pd.concat([combined_df, fen_features_df], axis=1)
     del fen_features_df
     gc.collect()
-    
+
     moves_features_df = pd.DataFrame(combined_df['Moves'].progress_apply(get_moves_features).tolist(), index=combined_df.index)
     combined_df = pd.concat([combined_df, moves_features_df], axis=1)
     del moves_features_df
     gc.collect()
-    
+
     themes_df = process_text_tags(combined_df['Themes'], prefix='theme', min_df=20)
     combined_df = pd.concat([combined_df, themes_df], axis=1)
     del themes_df
     gc.collect()
-    
+
     openings_df = process_text_tags(combined_df['OpeningTags'], prefix='opening', min_df=10)
     combined_df = pd.concat([combined_df, openings_df], axis=1)
     del openings_df
@@ -476,7 +481,7 @@ if __name__ == '__main__':
         if 'prob_all_mean' not in combined_df.columns and prob_cols_all:
             combined_df['prob_all_mean'] = combined_df[prob_cols_all].mean(axis=1)
             combined_df['prob_all_std'] = combined_df[prob_cols_all].std(axis=1)
-    
+
     for col in ['Popularity', 'NbPlays']:
         if col in combined_df.columns:
             combined_df[col] = pd.to_numeric(combined_df[col], errors='coerce').fillna(0)
@@ -489,21 +494,21 @@ if __name__ == '__main__':
     print("\nPreparing data for LightGBM model...")
     target_col = 'Rating'
     original_cols_to_drop = ['PuzzleId', 'FEN', 'Moves', 'Themes', 'GameUrl', 'OpeningTags']
-    
+
     if 'Popularity_log' in combined_df.columns:
         original_cols_to_drop.append('Popularity')
     if 'NbPlays_log' in combined_df.columns:
         original_cols_to_drop.append('NbPlays')
-    
+
     feature_columns = [col for col in combined_df.columns if col not in [target_col, 'is_train'] + original_cols_to_drop]
     numeric_feature_columns = []
-    
+
     for col in feature_columns:
         if pd.api.types.is_numeric_dtype(combined_df[col]):
             numeric_feature_columns.append(col)
         else:
             print(f"Warning: Dropping non-numeric pre-LGBM: {col} (dtype: {combined_df[col].dtype})")
-    
+
     feature_columns = numeric_feature_columns
     train_processed_df = combined_df[combined_df['is_train'] == 1].copy()
     test_processed_df = combined_df[combined_df['is_train'] == 0].copy()
@@ -522,7 +527,7 @@ if __name__ == '__main__':
     kf = KFold(n_splits=N_SPLITS_LGBM, shuffle=True, random_state=RANDOM_STATE)
     oof_preds = np.zeros(X_train.shape[0])
     test_preds_lgbm = np.zeros(X_test.shape[0])
-    
+
     lgb_params = {
         'objective': 'regression',  # Corrected!
         'metric': 'rmse',
@@ -539,12 +544,12 @@ if __name__ == '__main__':
         'n_jobs': -1,
         'boosting_type': 'gbdt',
     }
-    
+
     for fold, (train_idx, val_idx) in enumerate(tqdm(kf.split(X_train, y_train), total=N_SPLITS_LGBM, desc="LGBM KFold Training")):
         lgb_params['seed'] = RANDOM_STATE + fold
         X_tr_fold, X_val_fold = X_train.iloc[train_idx], X_train.iloc[val_idx]
         y_tr_fold, y_val_fold = y_train.iloc[train_idx], y_train.iloc[val_idx]
-        
+
         model = lgb.LGBMRegressor(**lgb_params)
         model.fit(
             X_tr_fold, y_tr_fold,
@@ -552,14 +557,14 @@ if __name__ == '__main__':
             eval_metric='rmse',
             callbacks=[lgb.early_stopping(LGBM_EARLY_STOPPING_ROUNDS, verbose=False)]
         )
-        
+
         model_fold_path = os.path.join(LGBM_MODEL_SAVE_DIR, f"lgbm_fold_{fold+1}_best_iter_{model.best_iteration_}.txt")
         model.booster_.save_model(model_fold_path)
         tqdm.write(f"Fold {fold+1} LGBM model saved: {model_fold_path} (Best iter: {model.best_iteration_})")
-        
+
         oof_preds[val_idx] = model.predict(X_val_fold, num_iteration=model.best_iteration_)
         test_preds_lgbm += model.predict(X_test, num_iteration=model.best_iteration_) / N_SPLITS_LGBM
-    
+
     oof_rmse = np.sqrt(mean_squared_error(y_train, oof_preds))
     print(f"\nOverall OOF RMSE (LGBM with PyTorch AE, no engine): {oof_rmse:.4f}")
 
@@ -572,7 +577,7 @@ if __name__ == '__main__':
         eval_metric='rmse',
         callbacks=[lgb.early_stopping(LGBM_EARLY_STOPPING_ROUNDS, verbose=False)]
     )
-    
+
     val_preds = val_model.predict(X_val_final, num_iteration=val_model.best_iteration_)
     val_rmse = np.sqrt(mean_squared_error(y_val_final, val_preds))
     print(f"Validation RMSE on explicit 80/20 split: {val_rmse:.4f}")
@@ -596,13 +601,13 @@ if __name__ == '__main__':
     final_predictions = np.round(test_preds_lgbm).astype(int)
     submission_df = pd.DataFrame({'PuzzleId': test_puzzle_ids, 'Rating': final_predictions})
     submission_file_path = SUBMISSION_FILE
-    
+
     if not submission_file_path.lower().endswith('.txt'):
         submission_file_path = os.path.splitext(submission_file_path)[0] + ".txt"
-    
+
     with open(submission_file_path, 'w') as f:
         for pred_rating in submission_df['Rating']:
             f.write(f"{pred_rating}\n")
-    
+
     print(f"Submission file '{submission_file_path}' created.")
     print("First 5 predictions:\n", submission_df.head())

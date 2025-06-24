@@ -613,7 +613,7 @@ def extract_embeddings_from_autoencoder(autoencoder_model, sequences_np, current
     return np.concatenate(all_embeddings_list, axis=0)
 
 
-def get_success_prob_features_with_trained_ae(df_in, trained_rapid_ae, trained_blitz_ae, device_for_loading):
+def get_success_prob_features_with_trained_ae(df_in, trained_rapid_ae, trained_blitz_ae, device_for_loading, batch_size=None):
     df = df_in.copy()
     prob_cols = [col for col in df.columns if 'success_prob_' in col]
     rapid_prob_cols = sorted([col for col in prob_cols if 'rapid' in col], key=lambda x: int(x.split('_')[-1]))
@@ -628,12 +628,16 @@ def get_success_prob_features_with_trained_ae(df_in, trained_rapid_ae, trained_b
     features_df['prob_rapid_mean'] = df[rapid_prob_cols].mean(axis=1) if rapid_prob_cols else np.nan
     features_df['prob_blitz_mean'] = df[blitz_prob_cols].mean(axis=1) if blitz_prob_cols else np.nan
 
+    # Use the provided batch_size or default to AE_BATCH_SIZE_PER_GPU
+    batch_size_per_gpu = batch_size // GPUS_TO_USE if batch_size and GPUS_TO_USE > 0 else AE_BATCH_SIZE_PER_GPU
+
     if trained_rapid_ae and rapid_prob_cols and len(rapid_prob_cols) == PROB_SEQ_LENGTH:
         rapid_sequences = df[rapid_prob_cols].dropna().values.astype(np.float32)  # dropna here too
         if rapid_sequences.shape[0] > 0:
             print("Extracting Rapid Prob Embeddings (trained AE)...")
             rapid_embeddings_np = extract_embeddings_from_autoencoder(trained_rapid_ae, rapid_sequences,
-                                                                      device_for_loading)
+                                                                      device_for_loading,
+                                                                      batch_size_per_gpu=batch_size_per_gpu)
             if rapid_embeddings_np.size > 0:  # Check if embeddings were generated
                 for i in range(rapid_embeddings_np.shape[1]):
                     features_df[f'pt_ae_rapid_emb_{i}'] = rapid_embeddings_np[:, i]
@@ -645,7 +649,8 @@ def get_success_prob_features_with_trained_ae(df_in, trained_rapid_ae, trained_b
         if blitz_sequences.shape[0] > 0:
             print("Extracting Blitz Prob Embeddings (trained AE)...")
             blitz_embeddings_np = extract_embeddings_from_autoencoder(trained_blitz_ae, blitz_sequences,
-                                                                      device_for_loading)
+                                                                      device_for_loading,
+                                                                      batch_size_per_gpu=batch_size_per_gpu)
             if blitz_embeddings_np.size > 0:  # Check if embeddings were generated
                 for i in range(blitz_embeddings_np.shape[1]):
                     features_df[f'pt_ae_blitz_emb_{i}'] = blitz_embeddings_np[:, i]
