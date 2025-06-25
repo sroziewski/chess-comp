@@ -4,6 +4,30 @@ Training script for LightGBM model with autoencoder features from train_stacking
 This script loads features from final_dataset.csv, uses the autoencoder trained by train_stacking.py,
 and applies only the LightGBM model from train_lgbm_pt_ae_no_engine_direct.py for prediction.
 Unlike train_lgbm_with_stacking_ae.py, this script uses a simple 80/20 train/test split instead of cross-validation.
+
+The script supports sample weighting based on rating ranges, which can be configured in the config.yaml file
+under the 'rating_weights' section. This allows giving different importance to different rating ranges during
+training, similar to how class weights work in classification tasks.
+
+The weights are automatically computed based on the frequency distribution of ratings in the training set:
+1. Less frequent rating ranges receive higher weights (inverse frequency weighting)
+2. Weights are normalized to have a mean of 1.0
+3. This approach helps balance the model's focus across all rating ranges, giving more attention to 
+   underrepresented rating ranges
+
+Example config.yaml section:
+```yaml
+rating_weights:
+  enabled: true
+  ranges:
+    - [0, 1200]
+    - [1200, 1800]
+    - [1800, 2400]
+    - [2400, 3500]
+```
+
+Note that the 'weights' parameter is no longer needed in the config as weights are computed automatically
+based on the frequency distribution of the training data.
 """
 
 import os
@@ -351,10 +375,66 @@ if __name__ == '__main__':
     logger.info(f"LightGBM Parameters: {lgb_params}")
     lgbm_training_start = time.time()
 
-    # Train a single LightGBM model on the training set
+    # Define a function to assign weights based on rating ranges from config
+    def assign_weights(y_values, config_weights=None):
+        # Get rating weights configuration from config
+        rating_weights_config = config.get('rating_weights', {})
+        enabled = rating_weights_config.get('enabled', True)
+
+        if not enabled:
+            logger.info("Rating weights disabled in config. Using uniform weights.")
+            return np.ones_like(y_values, dtype=np.float32)
+
+        # Get ranges from config or use defaults
+        if config_weights is None:
+            rating_ranges = rating_weights_config.get('ranges', [(0, 1200), (1200, 1800), (1800, 2400), (2400, 3500)])
+            # We'll compute weights based on frequencies, not use the ones from config
+        else:
+            rating_ranges, _ = config_weights  # Ignore provided weights, we'll compute them
+
+        logger.info(f"Using rating ranges: {rating_ranges}")
+
+        # Initialize weights array
+        sample_weights = np.ones_like(y_values, dtype=np.float32)
+
+        # Count samples in each range to compute frequencies
+        range_counts = []
+        for min_val, max_val in rating_ranges:
+            mask = (y_values >= min_val) & (y_values < max_val)
+            count = np.sum(mask)
+            range_counts.append(count)
+
+        # Convert counts to frequencies
+        total_samples = len(y_values)
+        frequencies = np.array(range_counts) / total_samples
+
+        # Compute inverse frequencies (less frequent = higher weight)
+        # Add a small epsilon to avoid division by zero
+        epsilon = 1e-10
+        inverse_frequencies = 1.0 / (frequencies + epsilon)
+
+        # Normalize weights to have a reasonable scale (mean = 1.0)
+        weights = inverse_frequencies / np.mean(inverse_frequencies)
+
+        logger.info(f"Computed weights based on frequencies: {weights}")
+        logger.info(f"Range counts: {range_counts}, Frequencies: {frequencies}")
+
+        # Assign weights based on rating ranges
+        for i, (min_val, max_val) in enumerate(rating_ranges):
+            mask = (y_values >= min_val) & (y_values < max_val)
+            sample_weights[mask] = weights[i]
+
+        return sample_weights
+
+    # Calculate sample weights for training data
+    sample_weights = assign_weights(y_train)
+    logger.info(f"Using sample weights for training. Weight distribution: {np.unique(sample_weights, return_counts=True)}")
+
+    # Train a single LightGBM model on the training set with sample weights
     model = lgb.LGBMRegressor(**lgb_params)
     model.fit(
-        X_train, y_train, eval_set=[(X_test, y_test)], eval_metric='rmse',
+        X_train, y_train, sample_weight=sample_weights, 
+        eval_set=[(X_test, y_test)], eval_metric='rmse',
         callbacks=[lgb.early_stopping(LGBM_EARLY_STOPPING_ROUNDS, verbose=100), lgb.log_evaluation(period=100)]
     )
 

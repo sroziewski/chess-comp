@@ -204,6 +204,17 @@ stacking:
       patience: 10
 
 
+# Rating weights configuration for regression tasks
+rating_weights:
+  # Enable sample weighting based on rating ranges
+  enabled: true
+  # Rating ranges for frequency-based weight calculation
+  ranges:
+    - [0, 1200]
+    - [1200, 1800]
+    - [1800, 2400]
+    - [2400, 3500]
+
 # Performance dashboards configuration
 dashboards:
   # Enable performance dashboards
