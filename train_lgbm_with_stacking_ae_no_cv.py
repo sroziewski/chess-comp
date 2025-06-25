@@ -22,6 +22,7 @@ import time
 import datetime
 import logging
 import torch
+import joblib  # For saving the entire model object
 
 # --- Configuration Import ---
 try:
@@ -316,9 +317,9 @@ if __name__ == '__main__':
     # Split the training data into train (80%) and test (20%) sets
     X = train_processed_df[feature_columns].astype(np.float32)
     y = y_train_series.to_numpy()
-    
+
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=RANDOM_STATE, shuffle=True)
-    
+
     logger.info(f"Split training data into train (80%) and test (20%) sets:")
     logger.info(f"X_train shape: {X_train.shape}, y_train shape: {y_train.shape}")
     logger.info(f"X_test shape: {X_test.shape}, y_test shape: {y_test.shape}")
@@ -328,19 +329,19 @@ if __name__ == '__main__':
         if X_train[col].dtype == 'bool':
             X_train[col] = X_train[col].astype(int)
             X_test[col] = X_test[col].astype(int)
-    
+
     # Fill NaN values
     X_train = X_train.fillna(-999.0)
     X_test = X_test.fillna(-999.0)
-    
+
     # Prepare submission test data
     X_submission = test_processed_df[feature_columns].astype(np.float32) if not test_processed_df.empty else pd.DataFrame(columns=feature_columns).astype(np.float32)
-    
+
     # Convert boolean columns to int in submission data
     for col in X_submission.columns:
         if X_submission[col].dtype == 'bool':
             X_submission[col] = X_submission[col].astype(int)
-    
+
     # Fill NaN values in submission data
     X_submission = X_submission.fillna(-999.0)
 
@@ -356,30 +357,40 @@ if __name__ == '__main__':
         X_train, y_train, eval_set=[(X_test, y_test)], eval_metric='rmse',
         callbacks=[lgb.early_stopping(LGBM_EARLY_STOPPING_ROUNDS, verbose=100), lgb.log_evaluation(period=100)]
     )
-    
-    # Save the model
+
+    # Save the model in LightGBM's native format
     model_path = os.path.join(LGBM_MODEL_SAVE_DIR, f"lgbm_model_iter_{model.best_iteration_}.txt")
     model.booster_.save_model(model_path)
-    logger.info(f"Model saved to {model_path}")
+    logger.info(f"Model booster saved to {model_path}")
+
+    # Save the entire model object for stacking
+    joblib_model_path = os.path.join(LGBM_MODEL_SAVE_DIR, f"lgbm_model_iter_{model.best_iteration_}.joblib")
+    joblib.dump(model, joblib_model_path)
+    logger.info(f"Full model object saved to {joblib_model_path} for stacking")
+
+    # To load this model for stacking in another script, use:
+    # import joblib
+    # loaded_model = joblib.load(joblib_model_path)
+    # predictions = loaded_model.predict(X_new_data)
 
     # Get feature importances
     feature_importances = pd.DataFrame({
         "feature": X_train.columns,
         "importance": model.feature_importances_
     }).sort_values("importance", ascending=False)
-    
+
     logger.info(f"Feature Importances (Top 20):\n{feature_importances.head(20)}")
     logger.info(f"LGBM training completed in {time.time() - lgbm_training_start:.2f}s")
 
     logger.info("Step 6: Evaluating model on test set...")
     # Make predictions on the test set
     test_preds = model.predict(X_test, num_iteration=model.best_iteration_)
-    
+
     # Calculate metrics
     test_rmse = np.sqrt(mean_squared_error(y_test, test_preds))
     test_mae = mean_absolute_error(y_test, test_preds)
     test_r2 = r2_score(y_test, test_preds)
-    
+
     logger.info(f"Test RMSE: {test_rmse:.4f}, MAE: {test_mae:.4f}, R²: {test_r2:.4f}")
     record_metric("test_rmse", test_rmse, "model_performance")
     record_metric("test_mae", test_mae, "model_performance")
