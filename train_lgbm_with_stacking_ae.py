@@ -169,12 +169,12 @@ if __name__ == '__main__':
     record_metric("gpu_count", GPUS_TO_USE, "hardware")
     record_metric("device_type", "cuda" if DEVICE.type == "cuda" else "cpu", "hardware")
 
-    logger.info("Step 1: Loading data from final_dataset.csv...")
+    logger.info("Step 1: Loading data from final_dataset_engine_with_matches.csv...")
     data_load_start = time.time()
     try:
-        combined_df = pd.read_csv('final_dataset.csv')
+        combined_df = pd.read_csv('final_dataset_engine_with_matches.csv')
     except FileNotFoundError:
-        logger.error("final_dataset.csv not found. Exiting.")
+        logger.error("final_dataset_engine_with_matches.csv not found. Exiting.")
         exit(1)
     logger.info(f"Initial combined_df shape: {combined_df.shape}")
 
@@ -270,7 +270,7 @@ if __name__ == '__main__':
         logger.error(f"Target column '{target_col}' not found. Exiting.")
         exit(1)
 
-    cols_to_drop = ['PuzzleId', 'FEN', 'Moves', 'Rating', 'is_train', 'Themes', 'GameUrl', 'OpeningTags', 'idx', 'Popularity', 'NbPlays']
+    cols_to_drop = ['PuzzleId', 'FEN', 'Moves', 'Rating', 'is_train', 'Themes', 'GameUrl', 'OpeningTags', 'idx', 'Popularity', 'NbPlays', 'engine_top_move_uci', 'engine_second_move_uci', 'engine_third_move_uci']
     feature_columns = [col for col in combined_df.columns if col not in cols_to_drop and pd.api.types.is_numeric_dtype(combined_df[col])]
     non_numeric_to_drop = [col for col in combined_df.columns if col not in cols_to_drop and col not in feature_columns]
     if non_numeric_to_drop:
