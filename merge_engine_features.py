@@ -39,6 +39,13 @@ def process_entire_dataset(final_dataset_file, engine_features_file, output_file
         engine_df = pd.read_csv(engine_features_file)
         logger.info(f"Shape of engine features dataset: {engine_df.shape}")
 
+        # Check for duplicate FEN values in engine_df
+        fen_duplicates = engine_df['FEN'].duplicated().sum()
+        if fen_duplicates > 0:
+            logger.warning(f"Found {fen_duplicates} duplicate FEN values in engine features dataset. Keeping only the first occurrence...")
+            engine_df = engine_df.drop_duplicates(subset=['FEN'])
+            logger.info(f"After removing duplicate FENs, shape of engine features dataset: {engine_df.shape}")
+
         # Check if 'FEN' column exists in both dataframes
         if 'FEN' not in final_df.columns:
             logger.error("'FEN' column not found in final dataset")
@@ -105,6 +112,13 @@ def process_in_chunks(final_dataset_file, engine_features_file, output_file, chu
         logger.info(f"Reading {engine_features_file}...")
         engine_df = pd.read_csv(engine_features_file)
         logger.info(f"Shape of engine features dataset: {engine_df.shape}")
+
+        # Check for duplicate FEN values in engine_df
+        fen_duplicates = engine_df['FEN'].duplicated().sum()
+        if fen_duplicates > 0:
+            logger.warning(f"Found {fen_duplicates} duplicate FEN values in engine features dataset. Keeping only the first occurrence...")
+            engine_df = engine_df.drop_duplicates(subset=['FEN'])
+            logger.info(f"After removing duplicate FENs, shape of engine features dataset: {engine_df.shape}")
 
         # Check if 'FEN' column exists in engine_df
         if 'FEN' not in engine_df.columns:
