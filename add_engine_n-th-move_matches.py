@@ -130,6 +130,13 @@ if __name__ == "__main__":
                 match_rate = relevant_puzzles_for_match_rate[col_name].mean() * 100
                 print(f"Match rate for {n}-th move among puzzles where both are defined: {match_rate:.2f}%")
 
+    # Check for duplicate rows
+    duplicate_count = df_processed.duplicated().sum()
+    if duplicate_count > 0:
+        print(f"\nFound {duplicate_count} duplicate rows. Removing duplicates...")
+        df_processed = df_processed.drop_duplicates()
+        print(f"After removing duplicates, shape: {df_processed.shape}")
+
     # Save the updated DataFrame
     print(f"\nSaving updated dataset to: {output_csv_path}")
     try:
