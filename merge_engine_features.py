@@ -34,7 +34,7 @@ def process_entire_dataset(final_dataset_file, engine_features_file, output_file
         logger.info(f"Reading {final_dataset_file}...")
         final_df = pd.read_csv(final_dataset_file)
         logger.info(f"Shape of final dataset: {final_df.shape}")
-        
+
         logger.info(f"Reading {engine_features_file}...")
         engine_df = pd.read_csv(engine_features_file)
         logger.info(f"Shape of engine features dataset: {engine_df.shape}")
@@ -50,7 +50,7 @@ def process_entire_dataset(final_dataset_file, engine_features_file, output_file
         # Get the list of columns to add from engine_df (excluding 'FEN' which is used for matching)
         engine_columns = [col for col in engine_df.columns if col != 'FEN']
         logger.info(f"Number of engine feature columns to add: {len(engine_columns)}")
-        
+
         # Check for duplicate column names
         duplicate_cols = set(final_df.columns).intersection(set(engine_columns))
         if duplicate_cols:
@@ -66,13 +66,13 @@ def process_entire_dataset(final_dataset_file, engine_features_file, output_file
         logger.info("Merging dataframes on 'FEN' column...")
         # Use left join to keep all rows from final_df
         merged_df = pd.merge(final_df, engine_df, on='FEN', how='left')
-        
+
         # Check how many rows had matching FEN values
         if engine_columns:
             matched_rows = merged_df[engine_columns].notna().any(axis=1).sum()
             match_percentage = (matched_rows / len(final_df)) * 100
             logger.info(f"Matched {matched_rows} out of {len(final_df)} rows ({match_percentage:.2f}%) based on 'FEN' column")
-            
+
             if matched_rows == 0:
                 logger.warning("No rows were matched between the datasets. The output will be the same as the input final dataset.")
             elif matched_rows < len(final_df) * 0.1:  # Less than 10% matched
@@ -80,13 +80,20 @@ def process_entire_dataset(final_dataset_file, engine_features_file, output_file
         else:
             logger.warning("No engine feature columns to add (after handling duplicates).")
 
+        # Check for duplicate rows
+        duplicate_count = merged_df.duplicated().sum()
+        if duplicate_count > 0:
+            logger.warning(f"Found {duplicate_count} duplicate rows. Removing duplicates...")
+            merged_df = merged_df.drop_duplicates()
+            logger.info(f"After removing duplicates, shape: {merged_df.shape}")
+
         # Save the merged dataframe
         logger.info(f"Saving merged dataframe to {output_file}...")
         merged_df.to_csv(output_file, index=False)
         logger.info(f"Successfully saved merged dataframe to {output_file}")
-        
+
         return 0
-    
+
     except Exception as e:
         logger.error(f"Error in process_entire_dataset: {str(e)}")
         return 1
@@ -98,39 +105,39 @@ def process_in_chunks(final_dataset_file, engine_features_file, output_file, chu
         logger.info(f"Reading {engine_features_file}...")
         engine_df = pd.read_csv(engine_features_file)
         logger.info(f"Shape of engine features dataset: {engine_df.shape}")
-        
+
         # Check if 'FEN' column exists in engine_df
         if 'FEN' not in engine_df.columns:
             logger.error("'FEN' column not found in engine features dataset")
             return 1
-        
+
         # Get the list of columns to add from engine_df (excluding 'FEN' which is used for matching)
         engine_columns = [col for col in engine_df.columns if col != 'FEN']
         logger.info(f"Number of engine feature columns to add: {len(engine_columns)}")
-        
+
         # Initialize variables for tracking progress
         total_rows = 0
         matched_rows = 0
         first_chunk = True
-        
+
         # Process the final dataset in chunks
         logger.info(f"Processing {final_dataset_file} in chunks of size {chunk_size}...")
-        
+
         # Get the total number of rows in the final dataset for progress reporting
         with pd.read_csv(final_dataset_file, chunksize=chunk_size) as reader:
             for chunk_num, chunk in enumerate(reader, 1):
                 total_rows += len(chunk)
-        
+
         # Process the final dataset in chunks
         with pd.read_csv(final_dataset_file, chunksize=chunk_size) as reader:
             for chunk_num, chunk in enumerate(reader, 1):
                 logger.info(f"Processing chunk {chunk_num} ({len(chunk)} rows)...")
-                
+
                 # Check if 'FEN' column exists in the chunk
                 if 'FEN' not in chunk.columns:
                     logger.error("'FEN' column not found in final dataset")
                     return 1
-                
+
                 # Check for duplicate column names in the first chunk
                 if first_chunk:
                     duplicate_cols = set(chunk.columns).intersection(set(engine_columns))
@@ -143,38 +150,55 @@ def process_in_chunks(final_dataset_file, engine_features_file, output_file, chu
                         engine_columns = [rename_dict.get(col, col) for col in engine_columns]
                         logger.info(f"Renamed duplicate columns in engine features dataset")
                     first_chunk = False
-                
+
                 # Merge the chunk with engine_df on 'FEN' column
                 merged_chunk = pd.merge(chunk, engine_df, on='FEN', how='left')
-                
+
                 # Count matched rows in this chunk
                 if engine_columns:
                     chunk_matched = merged_chunk[engine_columns].notna().any(axis=1).sum()
                     matched_rows += chunk_matched
                     logger.info(f"Matched {chunk_matched} out of {len(chunk)} rows in chunk {chunk_num}")
-                
+
                 # Write the merged chunk to the output file
                 mode = 'w' if chunk_num == 1 else 'a'
                 header = chunk_num == 1
                 merged_chunk.to_csv(output_file, mode=mode, header=header, index=False)
-                
+
                 logger.info(f"Processed {len(chunk)} rows in chunk {chunk_num}")
-        
+
         # Report overall matching statistics
         if total_rows > 0 and engine_columns:
             match_percentage = (matched_rows / total_rows) * 100
             logger.info(f"Overall: Matched {matched_rows} out of {total_rows} rows ({match_percentage:.2f}%) based on 'FEN' column")
-            
+
             if matched_rows == 0:
                 logger.warning("No rows were matched between the datasets. The output will be the same as the input final dataset.")
             elif matched_rows < total_rows * 0.1:  # Less than 10% matched
                 logger.warning(f"Only {match_percentage:.2f}% of rows were matched. Please check if the 'FEN' values are in the same format in both datasets.")
         else:
             logger.warning("No engine feature columns to add (after handling duplicates).")
-        
-        logger.info(f"Successfully saved merged dataframe to {output_file}")
+
+        # Check for duplicate rows in the final output file
+        logger.info("Checking for duplicate rows in the output file...")
+        try:
+            output_df = pd.read_csv(output_file)
+            duplicate_count = output_df.duplicated().sum()
+            if duplicate_count > 0:
+                logger.warning(f"Found {duplicate_count} duplicate rows in the output file. Removing duplicates...")
+                output_df = output_df.drop_duplicates()
+                logger.info(f"After removing duplicates, shape: {output_df.shape}")
+                # Save the deduplicated dataframe back to the output file
+                output_df.to_csv(output_file, index=False)
+                logger.info(f"Saved deduplicated dataframe to {output_file}")
+            else:
+                logger.info("No duplicate rows found in the output file.")
+        except Exception as e:
+            logger.error(f"Error checking for duplicates in output file: {str(e)}")
+
+        logger.info(f"Successfully processed and saved merged dataframe to {output_file}")
         return 0
-    
+
     except Exception as e:
         logger.error(f"Error in process_in_chunks: {str(e)}")
         return 1
@@ -221,11 +245,11 @@ def main():
 if __name__ == "__main__":
     start_time = datetime.now()
     logger.info(f"Script started at {start_time}")
-    
+
     exit_code = main()
-    
+
     end_time = datetime.now()
     logger.info(f"Script completed at {end_time}")
     logger.info(f"Total execution time: {end_time - start_time}")
-    
+
     sys.exit(exit_code)
