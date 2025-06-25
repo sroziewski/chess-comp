@@ -6,6 +6,10 @@ import math # For entropy
 import os
 import concurrent.futures
 import time
+import multiprocessing
+
+# Set the start method for multiprocessing to 'spawn' to avoid CUDA re-initialization issues
+multiprocessing.set_start_method('spawn', force=True)
 
 try:
     from maia2 import model, inference
