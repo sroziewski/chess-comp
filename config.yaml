@@ -38,7 +38,7 @@ gpu:
 lgbm_params:
   objective: "regression" # or "mse"
   metric: "rmse"
-  n_estimators: 50000
+  n_estimators: 150000
   learning_rate: 0.01
   feature_fraction: 0.7
   bagging_fraction: 0.7
