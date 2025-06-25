@@ -26,6 +26,13 @@ The parallelization approach:
 3. Results are collected and combined into the final DataFrame
 4. Progress is tracked using tqdm
 
+Progress bars and timing information are provided for:
+1. Loading the dataset
+2. Initializing columns for the output DataFrame
+3. Processing rows in parallel
+4. Updating the DataFrame with results
+5. Saving the augmented dataset
+
 The number of worker processes is configured in config.yaml under performance.parallel.n_workers
 """
 
@@ -162,8 +169,11 @@ def main():
     print("Models and inference environment will be initialized in each worker process")
 
     print(f"Loading dataset from {INPUT_CSV_PATH}...")
+    load_start_time = time.time()
     try:
         df = pd.read_csv(INPUT_CSV_PATH)
+        load_time = time.time() - load_start_time
+        print(f"Dataset loaded in {load_time:.2f} seconds. Shape: {df.shape}")
     except FileNotFoundError:
         print(f"Error: Input file {INPUT_CSV_PATH} not found.")
         return
@@ -173,7 +183,8 @@ def main():
         return
 
     # Initialize new columns for the output DataFrame
-    for elo in ELO_LEVELS:
+    print("Initializing new columns for the output DataFrame...")
+    for elo in tqdm(ELO_LEVELS, desc="Initializing columns"):
         df[f'maia2_success_prob_rapid_{elo}'] = np.nan
         df[f'maia2_win_prob_rapid_{elo}'] = np.nan
         df[f'maia2_entropy_rapid_{elo}'] = np.nan
@@ -208,7 +219,7 @@ def main():
 
     # Update the DataFrame with the results from parallel processing
     print("Updating DataFrame with results...")
-    for result in results:
+    for result in tqdm(results, desc="Updating DataFrame"):
         if 'index' in result:
             idx = result.pop('index')
             for key, value in result.items():
@@ -216,10 +227,13 @@ def main():
                     df.loc[idx, key] = value
 
     print(f"\nSaving augmented dataset to {OUTPUT_CSV_PATH}...")
+    save_start_time = time.time()
     df.to_csv(OUTPUT_CSV_PATH, index=False)
+    save_time = time.time() - save_start_time
+    print(f"Dataset saved in {save_time:.2f} seconds.")
 
     total_time = time.time() - start_time
-    print(f"Dataset saved successfully. Total execution time: {total_time:.2f} seconds")
+    print(f"Total execution time: {total_time:.2f} seconds")
 
 if __name__ == '__main__':
     main()
